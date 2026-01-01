@@ -5,8 +5,7 @@ import {
   Plus, 
   Settings, 
   Users,
-  FolderPlus,
-  Zap
+  FolderPlus
 } from 'lucide-react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import {
@@ -64,9 +63,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
         <div className="flex items-center gap-3">
           {/* Logo */}
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-md flex items-center justify-center">
-              <Zap className="w-5 h-5 text-primary-foreground" />
-            </div>
+            <img src="/favicon.png" alt="CodeForge" className="w-8 h-8 rounded-md" />
             <span className="font-bold text-lg text-foreground">CodeForge</span>
           </div>
 
