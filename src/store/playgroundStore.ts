@@ -175,6 +175,12 @@ interface PlaygroundState {
   addCollaborator: (collaborator: Collaborator) => void;
   removeCollaborator: (id: string) => void;
   updateCollaboratorCursor: (id: string, cursor: { x: number; y: number }) => void;
+  
+  // File operations
+  renameFile: (id: string, newName: string) => void;
+  moveFiles: (dragIds: string[], parentId: string | null, index: number) => void;
+  createFile: (parentId: string | null, index: number, type: 'file' | 'folder') => ProjectFile | null;
+  deleteFiles: (ids: string[]) => void;
 }
 
 export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
@@ -312,6 +318,197 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       collaborators: state.collaborators.map((c) =>
         c.id === id ? { ...c, cursor } : c
       ),
+    }));
+  },
+
+  // ============ File Operations ============
+
+  renameFile: (id, newName) => {
+    const { currentProject, openTabs } = get();
+    if (!currentProject) return;
+
+    const renameInTree = (files: ProjectFile[]): ProjectFile[] => {
+      return files.map((file) => {
+        if (file.id === id) {
+          return { ...file, name: newName };
+        }
+        if (file.children) {
+          return { ...file, children: renameInTree(file.children) };
+        }
+        return file;
+      });
+    };
+
+    const updatedFiles = renameInTree(currentProject.files);
+    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+
+    // Also update open tabs if the renamed file is open
+    const updatedTabs = openTabs.map((tab) =>
+      tab.fileId === id ? { ...tab, fileName: newName } : tab
+    );
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+      openTabs: updatedTabs,
+    }));
+  },
+
+  moveFiles: (dragIds, parentId, index) => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    // Helper to find and remove nodes from tree
+    const removeFromTree = (files: ProjectFile[], ids: string[]): { remaining: ProjectFile[]; removed: ProjectFile[] } => {
+      const removed: ProjectFile[] = [];
+      const remaining = files
+        .filter((file) => {
+          if (ids.includes(file.id)) {
+            removed.push(file);
+            return false;
+          }
+          return true;
+        })
+        .map((file) => {
+          if (file.children) {
+            const result = removeFromTree(file.children, ids);
+            removed.push(...result.removed);
+            return { ...file, children: result.remaining };
+          }
+          return file;
+        });
+      return { remaining, removed };
+    };
+
+    // Helper to insert nodes into tree at position
+    const insertIntoTree = (files: ProjectFile[], targetParentId: string | null, insertIndex: number, nodesToInsert: ProjectFile[]): ProjectFile[] => {
+      if (targetParentId === null) {
+        // Insert at root level
+        const result = [...files];
+        const safeIndex = Math.min(insertIndex, result.length);
+        result.splice(safeIndex, 0, ...nodesToInsert.map((n) => ({ ...n, parentId: undefined })));
+        return result;
+      }
+
+      return files.map((file) => {
+        if (file.id === targetParentId && file.children) {
+          const newChildren = [...file.children];
+          const safeIndex = Math.min(insertIndex, newChildren.length);
+          newChildren.splice(safeIndex, 0, ...nodesToInsert.map((n) => ({ ...n, parentId: targetParentId })));
+          return { ...file, children: newChildren };
+        }
+        if (file.children) {
+          return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex, nodesToInsert) };
+        }
+        return file;
+      });
+    };
+
+    const { remaining, removed } = removeFromTree(currentProject.files, dragIds);
+    const updatedFiles = insertIntoTree(remaining, parentId, index, removed);
+    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+    }));
+  },
+
+  createFile: (parentId, index, type) => {
+    const { currentProject } = get();
+    if (!currentProject) return null;
+
+    const newFile: ProjectFile = {
+      id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: type === 'folder' ? 'New Folder' : 'untitled.c',
+      content: type === 'folder' ? '' : '// New file\n',
+      language: type === 'folder' ? 'folder' : 'c',
+      isFolder: type === 'folder',
+      children: type === 'folder' ? [] : undefined,
+      parentId: parentId ?? undefined,
+    };
+
+    const insertIntoTree = (files: ProjectFile[], targetParentId: string | null, insertIndex: number): ProjectFile[] => {
+      if (targetParentId === null) {
+        const result = [...files];
+        const safeIndex = Math.min(insertIndex, result.length);
+        result.splice(safeIndex, 0, newFile);
+        return result;
+      }
+
+      return files.map((file) => {
+        if (file.id === targetParentId && file.children) {
+          const newChildren = [...file.children];
+          const safeIndex = Math.min(insertIndex, newChildren.length);
+          newChildren.splice(safeIndex, 0, newFile);
+          return { ...file, children: newChildren };
+        }
+        if (file.children) {
+          return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex) };
+        }
+        return file;
+      });
+    };
+
+    const updatedFiles = insertIntoTree(currentProject.files, parentId, index);
+    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+    }));
+
+    return newFile;
+  },
+
+  deleteFiles: (ids) => {
+    const { currentProject, openTabs } = get();
+    if (!currentProject) return;
+
+    // Collect all IDs to delete (including children of folders)
+    const collectAllIds = (files: ProjectFile[], targetIds: string[]): string[] => {
+      const allIds: string[] = [];
+      const traverse = (file: ProjectFile) => {
+        if (targetIds.includes(file.id)) {
+          allIds.push(file.id);
+          if (file.children) {
+            file.children.forEach(traverse);
+          }
+        } else if (file.children) {
+          file.children.forEach(traverse);
+        }
+      };
+      files.forEach(traverse);
+      return [...new Set([...targetIds, ...allIds])];
+    };
+
+    const allIdsToDelete = collectAllIds(currentProject.files, ids);
+
+    const removeFromTree = (files: ProjectFile[]): ProjectFile[] => {
+      return files
+        .filter((file) => !allIdsToDelete.includes(file.id))
+        .map((file) => {
+          if (file.children) {
+            return { ...file, children: removeFromTree(file.children) };
+          }
+          return file;
+        });
+    };
+
+    const updatedFiles = removeFromTree(currentProject.files);
+    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+
+    // Close tabs for deleted files
+    const remainingTabs = openTabs.filter((tab) => !allIdsToDelete.includes(tab.fileId));
+    const newActiveTabId = remainingTabs.length > 0 ? remainingTabs[remainingTabs.length - 1].id : null;
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+      openTabs: remainingTabs,
+      activeTabId: allIdsToDelete.includes(state.openTabs.find((t) => t.id === state.activeTabId)?.fileId ?? '')
+        ? newActiveTabId
+        : state.activeTabId,
     }));
   },
 }));
