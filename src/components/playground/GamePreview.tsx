@@ -43,8 +43,8 @@ const GamePreview: React.FC = () => {
 
   const handleFullscreen = () => {
     if (lastBuildId) {
-      // Use published URL for sharing
-      window.open(`https://playpen-canvas.lovable.app/preview/${lastBuildId}`, '_blank');
+      // Open in new tab using our preview route (which wraps backend in iframe)
+      window.open(`/preview/${lastBuildId}`, '_blank');
     }
   };
 

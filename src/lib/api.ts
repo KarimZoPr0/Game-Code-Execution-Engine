@@ -1,5 +1,7 @@
 // API client for communicating with the backend build server
-const API_BASE_URL = import.meta.env.VITE_API_URL || "https://shantell-pinchable-lividly.ngrok-free.dev";
+// ========== CHANGE THIS URL WHEN YOUR BACKEND CHANGES ==========
+const API_BASE_URL = "https://shantell-pinchable-lividly.ngrok-free.dev";
+// ===============================================================
 
 export interface BuildFile {
   path: string;
