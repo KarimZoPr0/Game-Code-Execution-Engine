@@ -149,7 +149,6 @@ export default function ExcalidrawPanel() {
             export: false,
             loadScene: false,
             saveToActiveFile: false,
-            // ✅ must be true for theme toggle + Alt+Shift+D
             toggleTheme: true,
             saveAsImage: false,
           },
