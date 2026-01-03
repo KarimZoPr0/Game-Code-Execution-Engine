@@ -1,52 +1,12 @@
-import React, { useEffect, useRef } from 'react';
-import Editor, { loader, OnMount } from '@monaco-editor/react';
-import { usePlaygroundStore } from '@/store/playgroundStore';
-import { cn } from '@/lib/utils';
-
-// Define custom theme before component mounts
-loader.init().then((monaco) => {
-  monaco.editor.defineTheme('codeforge-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [
-      { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-      { token: 'keyword', foreground: 'C586C0' },
-      { token: 'string', foreground: 'CE9178' },
-      { token: 'number', foreground: 'B5CEA8' },
-      { token: 'function', foreground: 'DCDCAA' },
-      { token: 'variable', foreground: '9CDCFE' },
-      { token: 'type', foreground: '4EC9B0' },
-      { token: 'identifier', foreground: '9CDCFE' },
-      { token: 'operator', foreground: 'D4D4D4' },
-      { token: 'delimiter', foreground: 'D4D4D4' },
-    ],
-    colors: {
-      'editor.background': '#0d1117',
-      'editor.foreground': '#c9d1d9',
-      'editor.lineHighlightBackground': '#161b2266',
-      'editor.selectionBackground': '#264f78',
-      'editorCursor.foreground': '#58a6ff',
-      'editorLineNumber.foreground': '#484f58',
-      'editorLineNumber.activeForeground': '#c9d1d9',
-      'editor.inactiveSelectionBackground': '#264f7855',
-      'editorIndentGuide.background': '#21262d',
-      'editorIndentGuide.activeBackground': '#30363d',
-      'editorWidget.background': '#161b22',
-      'editorWidget.border': '#30363d',
-      'editorSuggestWidget.background': '#161b22',
-      'editorSuggestWidget.border': '#30363d',
-      'editorSuggestWidget.selectedBackground': '#264f78',
-      'scrollbar.shadow': '#00000000',
-      'scrollbarSlider.background': '#484f5833',
-      'scrollbarSlider.hoverBackground': '#484f5866',
-      'scrollbarSlider.activeBackground': '#484f5899',
-    },
-  });
-});
+import React, { useEffect } from "react";
+import Editor from "@monaco-editor/react";
+import { usePlaygroundStore } from "@/store/playgroundStore";
+import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type * as monaco from "monaco-editor";
 
 const MonacoEditor: React.FC = () => {
-  const { openTabs, activeTabId, setActiveTab, updateFileContent } = usePlaygroundStore();
-  const editorRef = useRef<unknown>(null);
+  const { openTabs, activeTabId, setActiveTab, closeTab, updateFileContent } = usePlaygroundStore();
 
   const activeTab = openTabs.find((tab) => tab.id === activeTabId);
 
@@ -56,31 +16,28 @@ const MonacoEditor: React.FC = () => {
     }
   };
 
-  const handleEditorMount: OnMount = (editor) => {
-    editorRef.current = editor;
-  };
-
   const getLanguage = (lang: string) => {
     switch (lang) {
-      case 'c':
-      case 'h':
-        return 'c';
-      case 'cpp':
-      case 'cc':
-      case 'hpp':
-        return 'cpp';
-      case 'makefile':
-        return 'makefile';
-      case 'json':
-        return 'json';
+      case "c":
+      case "h":
+        return "c";
+      case "makefile":
+        return "makefile";
       default:
-        return 'plaintext';
+        return "plaintext";
     }
   };
 
+  // A nicer dark theme than vs-dark: "Tokyo Night"-ish
+  useEffect(() => {
+    // define a tiny guard so we only register once per page-load
+    // (monaco is global-ish; defining again is harmless but noisy in some setups)
+    (window as any).__MONACO_TOKYO_NIGHT_DEFINED__ = (window as any).__MONACO_TOKYO_NIGHT_DEFINED__ ?? false;
+  }, []);
+
   if (openTabs.length === 0) {
     return (
-      <div className="h-full bg-[#0d1117] flex items-center justify-center">
+      <div className="h-full bg-editor-bg flex items-center justify-center">
         <div className="text-center text-muted-foreground">
           <p className="text-lg mb-2">No file open</p>
           <p className="text-sm">Select a file from the tree to start editing</p>
@@ -90,25 +47,34 @@ const MonacoEditor: React.FC = () => {
   }
 
   return (
-    <div className="h-full flex flex-col bg-[#0d1117]">
+    <div className="h-full flex flex-col bg-editor-bg">
       {/* Tab bar */}
-      <div className="flex bg-[#161b22] border-b border-[#30363d] overflow-x-auto">
+      <div className="flex bg-panel-header border-b border-panel-border overflow-x-auto">
         {openTabs.map((tab) => (
           <div
             key={tab.id}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-[#30363d] min-w-fit",
-              "text-sm font-medium transition-colors",
+              "flex items-center gap-2 px-3 py-2 cursor-pointer border-r border-panel-border min-w-fit",
+              "text-sm font-medium",
               tab.id === activeTabId
-                ? "bg-[#0d1117] text-[#c9d1d9] border-b-2 border-b-[#58a6ff]"
-                : "text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#1c2128]"
+                ? "bg-editor-bg text-foreground border-b-2 border-b-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/30",
             )}
             onClick={() => setActiveTab(tab.id)}
           >
             <span className={cn(tab.isDirty && "italic")}>
               {tab.fileName}
-              {tab.isDirty && <span className="text-[#58a6ff] ml-1">●</span>}
+              {tab.isDirty && <span className="text-primary ml-1">•</span>}
             </span>
+            <button
+              className="p-0.5 hover:bg-muted rounded"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeTab(tab.id);
+              }}
+            >
+              <X className="w-3 h-3" />
+            </button>
           </div>
         ))}
       </div>
@@ -121,37 +87,88 @@ const MonacoEditor: React.FC = () => {
             language={getLanguage(activeTab.language)}
             value={activeTab.content}
             onChange={handleEditorChange}
-            onMount={handleEditorMount}
-            theme="codeforge-dark"
+            theme="tokyo-night"
+            beforeMount={(m: typeof monaco) => {
+              // Define a nicer theme once
+              if ((window as any).__MONACO_TOKYO_NIGHT_DEFINED__) return;
+
+              m.editor.defineTheme("tokyo-night", {
+                base: "vs-dark",
+                inherit: true,
+                rules: [
+                  { token: "comment", foreground: "565F89", fontStyle: "italic" },
+                  { token: "string", foreground: "9ECE6A" },
+                  { token: "number", foreground: "FF9E64" },
+                  { token: "keyword", foreground: "7AA2F7" },
+                  { token: "type", foreground: "2AC3DE" },
+                  { token: "delimiter", foreground: "A9B1D6" },
+                  { token: "operator", foreground: "89DDFF" },
+                  { token: "identifier", foreground: "C0CAF5" },
+                ],
+                colors: {
+                  // editor
+                  "editor.background": "#1A1B26",
+                  "editor.foreground": "#C0CAF5",
+                  "editorLineNumber.foreground": "#3B4261",
+                  "editorLineNumber.activeForeground": "#A9B1D6",
+
+                  // selection + highlight
+                  "editor.selectionBackground": "#33467C",
+                  "editor.inactiveSelectionBackground": "#2A2E3F",
+                  "editor.selectionHighlightBackground": "#2F3C70",
+                  "editor.wordHighlightBackground": "#2F3C70",
+                  "editor.wordHighlightStrongBackground": "#3D59A1",
+
+                  // current line
+                  "editor.lineHighlightBackground": "#1F2335",
+
+                  // cursor
+                  "editorCursor.foreground": "#C0CAF5",
+
+                  // whitespace / indent guides
+                  "editorWhitespace.foreground": "#2A2E3F",
+                  "editorIndentGuide.background": "#2A2E3F",
+                  "editorIndentGuide.activeBackground": "#3B4261",
+
+                  // find
+                  "editor.findMatchBackground": "#3D59A1",
+                  "editor.findMatchHighlightBackground": "#2F3C70",
+
+                  // brackets
+                  "editorBracketMatch.background": "#2F3C70",
+                  "editorBracketMatch.border": "#3D59A1",
+
+                  // minimap
+                  "minimap.background": "#16161E",
+
+                  // scrollbar
+                  "scrollbarSlider.background": "#2A2E3FAA",
+                  "scrollbarSlider.hoverBackground": "#3B4261AA",
+                  "scrollbarSlider.activeBackground": "#414868AA",
+                },
+              });
+
+              (window as any).__MONACO_TOKYO_NIGHT_DEFINED__ = true;
+            }}
             options={{
-              minimap: { enabled: true, scale: 1, showSlider: 'mouseover' },
+              minimap: { enabled: true },
               fontSize: 14,
-              fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               fontLigatures: true,
-              lineNumbers: 'on',
-              renderWhitespace: 'selection',
+              lineNumbers: "on",
+              renderWhitespace: "selection",
               scrollBeyondLastLine: false,
               automaticLayout: true,
               tabSize: 4,
               insertSpaces: true,
-              wordWrap: 'off',
-              padding: { top: 16, bottom: 16 },
-              cursorBlinking: 'smooth',
-              cursorSmoothCaretAnimation: 'on',
-              smoothScrolling: true,
+              wordWrap: "off",
+              padding: { top: 16 },
+              cursorBlinking: "smooth",
+              cursorSmoothCaretAnimation: "on",
+              smoothScrolling: false,
+              // a couple tasteful usability tweaks
               bracketPairColorization: { enabled: true },
-              guides: {
-                bracketPairs: true,
-                indentation: true,
-              },
-              overviewRulerBorder: false,
-              hideCursorInOverviewRuler: true,
-              scrollbar: {
-                vertical: 'auto',
-                horizontal: 'auto',
-                verticalScrollbarSize: 10,
-                horizontalScrollbarSize: 10,
-              },
+              guides: { bracketPairs: true },
             }}
           />
         )}
