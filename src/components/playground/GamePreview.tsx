@@ -14,31 +14,26 @@ const GamePreview: React.FC = () => {
   
   const [isRunning, setIsRunning] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
-  const [isLoaded, setIsLoaded] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  // Reset loaded state when URL changes
-  useEffect(() => {
-    setIsLoaded(false);
-  }, [lastPreviewUrl]);
 
   // Handle hot-reload when Build & Run completes
   useEffect(() => {
     if (pendingHotReload && lastPreviewUrl) {
-      setIframeKey(prev => prev + 1);
-      setIsRunning(true);
-      setIsLoaded(false);
+      if (isRunning) {
+        // Hot-swap: just reload the iframe
+        setIframeKey(prev => prev + 1);
+      } else {
+        // Auto-start: begin running
+        setIsRunning(true);
+      }
       clearPendingHotReload();
     }
-  }, [pendingHotReload, lastPreviewUrl, clearPendingHotReload]);
-
-  const handleIframeLoad = () => {
-    setIsLoaded(true);
-  };
+  }, [pendingHotReload, isRunning, lastPreviewUrl, clearPendingHotReload]);
 
   const handlePlay = () => {
     if (lastPreviewUrl) {
       setIsRunning(true);
+      setIframeKey(prev => prev + 1);
     }
   };
 
@@ -47,13 +42,14 @@ const GamePreview: React.FC = () => {
   };
 
   const handleFullscreen = () => {
-    if (lastPreviewUrl) {
-      // Open backend preview directly - no wrapper needed, instant
-      window.open(lastPreviewUrl, '_blank');
+    if (lastBuildId) {
+      // Open in new tab using our preview route (which wraps backend in iframe)
+      window.open(`/preview/${lastBuildId}`, '_blank');
     }
   };
 
   const canPlay = !!lastPreviewUrl;
+  const showRunning = lastPreviewUrl && isRunning;
 
   return (
     <div className="h-full flex flex-col bg-editor-bg">
@@ -87,7 +83,7 @@ const GamePreview: React.FC = () => {
 
           <button
             onClick={handleFullscreen}
-            disabled={!lastPreviewUrl}
+            disabled={!lastBuildId}
             className="p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
             title="Open in new tab"
           >
@@ -96,31 +92,20 @@ const GamePreview: React.FC = () => {
         </div>
       </div>
 
-      {/* Preview area - iframe always mounted for instant loading */}
-      <div className="flex-1 bg-[#14141e] overflow-hidden relative">
-        {/* Iframe always mounted when URL exists - starts loading immediately */}
-        {lastPreviewUrl && (
+      {/* Preview area - full canvas, no overlays */}
+      <div className="flex-1 bg-[#14141e] overflow-hidden">
+        {showRunning && lastPreviewUrl ? (
           <iframe
             key={iframeKey}
             ref={iframeRef}
             src={lastPreviewUrl}
-            className={`absolute inset-0 w-full h-full border-0 transition-opacity duration-100 ${
-              isRunning && isLoaded ? 'opacity-100' : 'opacity-0 pointer-events-none'
-            }`}
+            className="w-full h-full border-0"
             allow="autoplay; fullscreen"
             title="Game Preview"
-            onLoad={handleIframeLoad}
           />
-        )}
-        
-        {/* Placeholder shown when not running or loading */}
-        {(!isRunning || !isLoaded) && (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-            {!lastPreviewUrl 
-              ? 'Build your project first'
-              : !isRunning 
-                ? 'Press play to run'
-                : 'Loading...'}
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
+            {canPlay ? 'Press play to run' : 'Build your project first'}
           </div>
         )}
       </div>
