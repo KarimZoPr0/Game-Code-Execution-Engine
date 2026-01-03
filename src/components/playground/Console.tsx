@@ -1,26 +1,33 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import { Trash2, Terminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const Console: React.FC = () => {
-  const { consoleMessages, clearConsole } = usePlaygroundStore();
-  const scrollRef = useRef<HTMLDivElement>(null);
+type LogFilter = 'all' | 'console' | 'build';
 
+const Console: React.FC = () => {
+  const { consoleMessages, clearConsole, buildLogs, clearBuildLogs } = usePlaygroundStore();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [filter, setFilter] = useState<LogFilter>('all');
+
+  // Auto-scroll when new messages arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [consoleMessages]);
+  }, [consoleMessages, buildLogs]);
 
   const getMessageColor = (type: string) => {
     switch (type) {
       case 'error':
+      case 'stderr':
         return 'text-destructive';
       case 'warning':
         return 'text-warning';
       case 'success':
         return 'text-success';
+      case 'status':
+        return 'text-primary';
       default:
         return 'text-foreground';
     }
@@ -29,26 +36,76 @@ const Console: React.FC = () => {
   const getMessagePrefix = (type: string) => {
     switch (type) {
       case 'error':
+      case 'stderr':
         return '[ERROR]';
       case 'warning':
         return '[WARN]';
       case 'success':
         return '[OK]';
+      case 'status':
+        return '[BUILD]';
+      case 'stdout':
+        return '[BUILD]';
       default:
         return '[INFO]';
     }
   };
 
+  const handleClear = () => {
+    clearConsole();
+    clearBuildLogs();
+  };
+
+  // Combine and sort all messages
+  const allMessages = [
+    ...consoleMessages.map((msg) => ({
+      id: msg.id,
+      type: msg.type,
+      message: msg.message,
+      timestamp: msg.timestamp,
+      source: 'console' as const,
+    })),
+    ...buildLogs.map((log) => ({
+      id: log.id,
+      type: log.type,
+      message: log.message,
+      timestamp: log.timestamp,
+      source: 'build' as const,
+    })),
+  ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+  const filteredMessages = allMessages.filter((msg) => {
+    if (filter === 'all') return true;
+    return msg.source === filter;
+  });
+
   return (
     <div className="h-full flex flex-col bg-console-bg">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-panel-header border-b border-panel-border">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Terminal className="w-4 h-4" />
-          <span>Console</span>
+        <div className="flex items-center gap-2">
+          <Terminal className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">Console</span>
+          {/* Filter tabs */}
+          <div className="flex ml-2 text-xs">
+            {(['all', 'console', 'build'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={cn(
+                  'px-2 py-0.5 rounded capitalize',
+                  filter === f 
+                    ? 'bg-primary/20 text-primary' 
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                )}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         </div>
         <button
-          onClick={clearConsole}
+          onClick={handleClear}
           className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground"
           title="Clear console"
         >
@@ -58,10 +115,10 @@ const Console: React.FC = () => {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-auto p-3 font-mono text-sm">
-        {consoleMessages.length === 0 ? (
+        {filteredMessages.length === 0 ? (
           <div className="text-muted-foreground">No output</div>
         ) : (
-          consoleMessages.map((msg) => (
+          filteredMessages.map((msg) => (
             <div key={msg.id} className="flex gap-2 py-0.5">
               <span className="text-muted-foreground text-xs shrink-0">
                 {msg.timestamp.toLocaleTimeString()}
@@ -69,7 +126,7 @@ const Console: React.FC = () => {
               <span className={cn("font-semibold shrink-0", getMessageColor(msg.type))}>
                 {getMessagePrefix(msg.type)}
               </span>
-              <span className={getMessageColor(msg.type)}>{msg.message}</span>
+              <span className={cn(getMessageColor(msg.type), "break-all")}>{msg.message}</span>
             </div>
           ))
         )}
