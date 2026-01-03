@@ -213,7 +213,8 @@ export async function getBuildResult(buildId: string): Promise<BuildResult> {
 
 // Get preview URL for a build
 export function getPreviewUrl(buildId: string): string {
-  return `${API_BASE_URL}/preview/${buildId}`;
+  // Add ngrok-skip-browser-warning to bypass ngrok's interstitial page
+  return `${API_BASE_URL}/preview/${buildId}?ngrok-skip-browser-warning=1`;
 }
 
 // Get API base URL (useful for iframe src)
