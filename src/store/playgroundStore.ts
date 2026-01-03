@@ -480,8 +480,9 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
             addBuildLog(logType, event.message);
           } else if (event.type === 'done') {
             if (event.success) {
-              const previewUrl = event.previewUrl || getPreviewUrl(response.buildId);
-              set({ 
+              // Always use getPreviewUrl to ensure we use the correct API base URL
+              const previewUrl = getPreviewUrl(response.buildId);
+              set({
                 isBuilding: false, 
                 buildPhase: 'success', 
                 lastPreviewUrl: previewUrl,
