@@ -1,7 +1,5 @@
 // API client for communicating with the backend build server
-// ========== CHANGE THIS URL WHEN YOUR BACKEND CHANGES ==========
-const API_BASE_URL = "https://shantell-pinchable-lividly.ngrok-free.dev";
-// ================================================================
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://shantell-pinchable-lividly.ngrok-free.dev";
 
 export interface BuildFile {
   path: string;
@@ -70,29 +68,121 @@ export function subscribeToBuildEvents(
   onEvent: (event: BuildEvent) => void,
   onError: (error: Error) => void,
 ): () => void {
-  const eventSource = new EventSource(`${API_BASE_URL}/api/build/${buildId}/events`);
+  let closed = false;
+  let abortController: AbortController | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  const RECONNECT_DELAY = 2000;
 
-  eventSource.onmessage = (event) => {
+  const connect = async () => {
+    if (closed) return;
+
+    abortController = new AbortController();
+
     try {
-      const data = JSON.parse(event.data) as BuildEvent;
-      onEvent(data);
+      const response = await fetch(`${API_BASE_URL}/api/build/${buildId}/events`, {
+        headers: {
+          Accept: "text/event-stream",
+          "ngrok-skip-browser-warning": "true", // Skip ngrok warning page
+        },
+        credentials: "include",
+        signal: abortController.signal,
+      });
 
-      // Close on done or error
-      if (data.type === "done" || data.type === "error") {
-        eventSource.close();
+      if (!response.ok) {
+        throw new Error(`SSE connection failed: ${response.status}`);
       }
-    } catch (e) {
-      console.error("Failed to parse build event:", e);
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      let buffer = "";
+
+      while (!closed) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          // Connection closed normally (build completed)
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+
+        // Keep the last incomplete line in buffer
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6)) as BuildEvent;
+              onEvent(data);
+
+              // Close on done or error
+              if (data.type === "done" || data.type === "error") {
+                closed = true;
+                return;
+              }
+
+              // Reset reconnect attempts on successful event
+              if (data.type === "status") {
+                reconnectAttempts = 0;
+              }
+            } catch (e) {
+              console.error("Failed to parse build event:", e);
+            }
+          } else if (line === ": heartbeat" || line.trim() === "") {
+            // Ignore heartbeat messages and empty lines
+            continue;
+          }
+        }
+      }
+
+      // Connection closed normally, no need to reconnect
+      reconnectAttempts = 0;
+    } catch (error) {
+      if (closed) return;
+
+      if (error instanceof Error && error.name === "AbortError") {
+        // Cleanup, not an error
+        return;
+      }
+
+      // Only reconnect if we haven't exceeded max attempts
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !closed) {
+        reconnectAttempts++;
+        reconnectTimer = setTimeout(() => {
+          if (!closed) {
+            connect();
+          }
+        }, RECONNECT_DELAY);
+      } else {
+        // Max reconnection attempts reached or connection failed
+        onError(error instanceof Error ? error : new Error("Build event stream disconnected"));
+      }
     }
   };
 
-  eventSource.onerror = () => {
-    eventSource.close();
-    onError(new Error("Build event stream disconnected"));
-  };
+  // Start the connection
+  connect();
 
+  // Return cleanup function
   return () => {
-    eventSource.close();
+    closed = true;
+
+    if (abortController) {
+      abortController.abort();
+    }
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
   };
 }
 
