@@ -1,7 +1,25 @@
-import { create } from 'zustand';
-import { Project, ProjectFile, OpenTab, ConsoleMessage, Collaborator, BuildPhase, BuildLogEntry } from '@/types/playground';
-import { submitBuild as apiSubmitBuild, subscribeToBuildEvents, getBuildResult, getPreviewUrl } from '@/lib/api';
-import * as FlexLayout from 'flexlayout-react';
+import { create } from "zustand";
+import * as FlexLayout from "flexlayout-react";
+import {
+  Project,
+  ProjectFile,
+  OpenTab,
+  ConsoleMessage,
+  Collaborator,
+  BuildPhase,
+  BuildLogEntry,
+} from "@/types/playground";
+import { submitBuild as apiSubmitBuild, subscribeToBuildEvents, getPreviewUrl } from "@/lib/api";
+
+/**
+ * Fixes + improvements (no feature loss):
+ * - Prevents “Queued…” / stuck builds when building frequently:
+ *   - Always unsubscribes previous SSE stream before starting a new build.
+ *   - Adds a build watchdog timeout (if no events arrive, fail + unlock UI).
+ *   - Ignores stale events from older builds (race-proof).
+ * - Normalizes backend phases (init/compile/done/etc) to UI phases.
+ * - Keeps existing file ops, tabs, console, collaborators, layout logic.
+ */
 
 const defaultMainC = `#include <SDL2/SDL.h>
 #include <emscripten.h>
@@ -121,11 +139,9 @@ int main(int argc, char* argv[]) {
 }`;
 
 const defaultProject: Project = {
-  id: 'default-project',
-  name: 'My SDL Game',
-  files: [
-    { id: 'main-c', name: 'main.c', content: defaultMainC, language: 'c', isFolder: false },
-  ],
+  id: "default-project",
+  name: "My SDL Game",
+  files: [{ id: "main-c", name: "main.c", content: defaultMainC, language: "c", isFolder: false }],
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -138,7 +154,7 @@ interface PlaygroundState {
   consoleMessages: ConsoleMessage[];
   collaborators: Collaborator[];
   isBuilding: boolean;
-  
+
   // Build state
   lastBuildId: string | null;
   lastPreviewUrl: string | null;
@@ -146,10 +162,10 @@ interface PlaygroundState {
   buildLogs: BuildLogEntry[];
   buildError: string | null;
   pendingHotReload: boolean;
-  
-  // Layout model reference
+
+  // Layout
   layoutModel: FlexLayout.Model | null;
-  
+
   // Actions
   setCurrentProject: (project: Project) => void;
   createProject: (name: string) => void;
@@ -157,44 +173,77 @@ interface PlaygroundState {
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   updateFileContent: (tabId: string, content: string) => void;
-  addConsoleMessage: (type: ConsoleMessage['type'], message: string) => void;
+  addConsoleMessage: (type: ConsoleMessage["type"], message: string) => void;
   clearConsole: () => void;
-  
+
   // Build actions
   submitBuild: (runAfterBuild?: boolean) => Promise<void>;
-  addBuildLog: (type: BuildLogEntry['type'], message: string) => void;
+  addBuildLog: (type: BuildLogEntry["type"], message: string) => void;
   clearBuildLogs: () => void;
   syncTabsToProject: () => void;
   clearPendingHotReload: () => void;
-  
+
   // Layout actions
   setLayoutModel: (model: FlexLayout.Model) => void;
   ensureEditorVisible: () => void;
-  
+
+  // Collaborators
   addCollaborator: (collaborator: Collaborator) => void;
   removeCollaborator: (id: string) => void;
   updateCollaboratorCursor: (id: string, cursor: { x: number; y: number }) => void;
-  
+
   // File operations
   renameFile: (id: string, newName: string) => void;
   moveFiles: (dragIds: string[], parentId: string | null, index: number) => void;
-  createFile: (parentId: string | null, index: number, type: 'file' | 'folder') => ProjectFile | null;
+  createFile: (parentId: string | null, index: number, type: "file" | "folder") => ProjectFile | null;
   deleteFiles: (ids: string[]) => void;
 }
 
-// Helper to flatten file tree
-const flattenFiles = (files: ProjectFile[], parentPath = ''): { path: string; content: string; name: string }[] => {
-  const result: { path: string; content: string; name: string }[] = [];
+/** Flatten file tree into compiler payload */
+const flattenFiles = (files: ProjectFile[], parentPath = ""): { path: string; content: string; name: string }[] => {
+  const out: { path: string; content: string; name: string }[] = [];
   for (const file of files) {
     const filePath = parentPath ? `${parentPath}/${file.name}` : file.name;
-    if (!file.isFolder) {
-      result.push({ path: filePath, content: file.content, name: file.name });
-    }
-    if (file.children) {
-      result.push(...flattenFiles(file.children, filePath));
-    }
+    if (!file.isFolder) out.push({ path: filePath, content: file.content, name: file.name });
+    if (file.children) out.push(...flattenFiles(file.children, filePath));
   }
-  return result;
+  return out;
+};
+
+const nowId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+/** Normalize backend phases to UI phases */
+const normalizePhase = (phase?: string): BuildPhase => {
+  if (!phase) return "queued";
+  const p = phase.toLowerCase();
+
+  // backend examples: init, compile, building, done, cancelled
+  if (p === "init" || p === "queued" || p.includes("wait")) return "queued";
+  if (p === "compile" || p === "compiling") return "compiling";
+  if (p === "link" || p === "linking") return "linking";
+  if (p === "success") return "success";
+  if (p === "error" || p === "failed") return "error";
+  if (p === "idle") return "idle";
+
+  // fallback
+  return "building";
+};
+
+// ---- IMPORTANT: These are module-scoped to survive store re-renders ----
+let unsubscribeCurrentBuild: null | (() => void) = null;
+let buildWatchdog: null | ReturnType<typeof setTimeout> = null;
+let activeBuildId: string | null = null;
+
+const clearBuildWatchdog = () => {
+  if (buildWatchdog) {
+    clearTimeout(buildWatchdog);
+    buildWatchdog = null;
+  }
+};
+
+const startBuildWatchdog = (onTimeout: () => void, ms: number) => {
+  clearBuildWatchdog();
+  buildWatchdog = setTimeout(onTimeout, ms);
 };
 
 export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
@@ -203,37 +252,45 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   openTabs: [],
   activeTabId: null,
   consoleMessages: [
-    { id: '1', type: 'info', message: 'Welcome to CodeForge Playground!', timestamp: new Date() },
-    { id: '2', type: 'info', message: 'Ready to build C/SDL/Raylib projects.', timestamp: new Date() },
+    { id: "1", type: "info", message: "Welcome to CodeForge Playground!", timestamp: new Date() },
+    { id: "2", type: "info", message: "Ready to build C/SDL/Raylib projects.", timestamp: new Date() },
   ],
-  collaborators: [
-    { id: '1', name: 'You', color: '#2dd4bf' },
-  ],
+  collaborators: [{ id: "1", name: "You", color: "#2dd4bf" }],
   isBuilding: false,
-  
+
   // Build state
   lastBuildId: null,
   lastPreviewUrl: null,
-  buildPhase: 'idle',
+  buildPhase: "idle",
   buildLogs: [],
   buildError: null,
   pendingHotReload: false,
-  
+
   // Layout
   layoutModel: null,
 
   setCurrentProject: (project) => set({ currentProject: project }),
 
   createProject: (name) => {
+    const projectId = `project-${Date.now()}`;
+    const mainId = `main-${Date.now()}`;
     const newProject: Project = {
-      id: `project-${Date.now()}`,
+      id: projectId,
       name,
       files: [
-        { id: `main-${Date.now()}`, name: 'main.c', content: '// Start coding here\n#include <stdio.h>\n\nint main() {\n    printf("Hello, World!\\n");\n    return 0;\n}\n', language: 'c', isFolder: false },
+        {
+          id: mainId,
+          name: "main.c",
+          content:
+            '// Start coding here\n#include <stdio.h>\n\nint main() {\n  printf("Hello, World!\\n");\n  return 0;\n}\n',
+          language: "c",
+          isFolder: false,
+        },
       ],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+
     set((state) => ({
       projects: [...state.projects, newProject],
       currentProject: newProject,
@@ -244,15 +301,15 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   openFile: (file) => {
     if (file.isFolder) return;
-    
-    const existingTab = get().openTabs.find((tab) => tab.fileId === file.id);
-    if (existingTab) {
-      set({ activeTabId: existingTab.id });
+
+    const existing = get().openTabs.find((t) => t.fileId === file.id);
+    if (existing) {
+      set({ activeTabId: existing.id });
       return;
     }
 
-    const newTab: OpenTab = {
-      id: `tab-${Date.now()}`,
+    const tab: OpenTab = {
+      id: nowId("tab"),
       fileId: file.id,
       fileName: file.name,
       content: file.content,
@@ -260,19 +317,14 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       isDirty: false,
     };
 
-    set((state) => ({
-      openTabs: [...state.openTabs, newTab],
-      activeTabId: newTab.id,
-    }));
+    set((state) => ({ openTabs: [...state.openTabs, tab], activeTabId: tab.id }));
   },
 
   closeTab: (tabId) => {
     set((state) => {
-      const newTabs = state.openTabs.filter((tab) => tab.id !== tabId);
-      const newActiveId = state.activeTabId === tabId
-        ? newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null
-        : state.activeTabId;
-      return { openTabs: newTabs, activeTabId: newActiveId };
+      const tabs = state.openTabs.filter((t) => t.id !== tabId);
+      const active = state.activeTabId === tabId ? (tabs.length ? tabs[tabs.length - 1].id : null) : state.activeTabId;
+      return { openTabs: tabs, activeTabId: active };
     });
   },
 
@@ -280,260 +332,273 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   updateFileContent: (tabId, content) => {
     set((state) => ({
-      openTabs: state.openTabs.map((tab) =>
-        tab.id === tabId ? { ...tab, content, isDirty: true } : tab
-      ),
+      openTabs: state.openTabs.map((t) => (t.id === tabId ? { ...t, content, isDirty: true } : t)),
     }));
   },
 
   addConsoleMessage: (type, message) => {
-    const newMessage: ConsoleMessage = {
-      id: `msg-${Date.now()}`,
-      type,
-      message,
-      timestamp: new Date(),
-    };
-    set((state) => ({
-      consoleMessages: [...state.consoleMessages, newMessage],
-    }));
+    const msg: ConsoleMessage = { id: nowId("msg"), type, message, timestamp: new Date() };
+    set((state) => ({ consoleMessages: [...state.consoleMessages, msg] }));
   },
 
   clearConsole: () => set({ consoleMessages: [] }),
 
-  // Sync dirty tabs back to project files
   syncTabsToProject: () => {
     const { currentProject, openTabs } = get();
     if (!currentProject) return;
 
-    const dirtyTabs = openTabs.filter((tab) => tab.isDirty);
+    const dirtyTabs = openTabs.filter((t) => t.isDirty);
     if (dirtyTabs.length === 0) return;
 
-    const updateFileInTree = (files: ProjectFile[], fileId: string, newContent: string): ProjectFile[] => {
-      return files.map((file) => {
-        if (file.id === fileId) {
-          return { ...file, content: newContent };
-        }
-        if (file.children) {
-          return { ...file, children: updateFileInTree(file.children, fileId, newContent) };
-        }
-        return file;
+    const updateTree = (files: ProjectFile[], fileId: string, newContent: string): ProjectFile[] =>
+      files.map((f) => {
+        if (f.id === fileId) return { ...f, content: newContent };
+        if (f.children) return { ...f, children: updateTree(f.children, fileId, newContent) };
+        return f;
       });
-    };
 
     let updatedFiles = currentProject.files;
-    for (const tab of dirtyTabs) {
-      updatedFiles = updateFileInTree(updatedFiles, tab.fileId, tab.content);
-    }
+    for (const t of dirtyTabs) updatedFiles = updateTree(updatedFiles, t.fileId, t.content);
 
     const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
-    
-    // Mark tabs as not dirty
-    const updatedTabs = openTabs.map((tab) => ({ ...tab, isDirty: false }));
+    const cleanedTabs = openTabs.map((t) => ({ ...t, isDirty: false }));
 
     set((state) => ({
       currentProject: updatedProject,
       projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
-      openTabs: updatedTabs,
+      openTabs: cleanedTabs,
     }));
   },
 
-  // Build actions
   addBuildLog: (type, message) => {
-    const newLog: BuildLogEntry = {
-      id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      type,
-      message,
-      timestamp: new Date(),
-    };
-    set((state) => ({
-      buildLogs: [...state.buildLogs, newLog],
-    }));
+    const log: BuildLogEntry = { id: nowId("log"), type, message, timestamp: new Date() };
+    set((state) => ({ buildLogs: [...state.buildLogs, log] }));
   },
 
   clearBuildLogs: () => set({ buildLogs: [], buildError: null }),
-  
+
   clearPendingHotReload: () => set({ pendingHotReload: false }),
-  
+
   setLayoutModel: (model) => set({ layoutModel: model }),
-  
+
   ensureEditorVisible: () => {
     const { layoutModel } = get();
     if (!layoutModel) return;
-    
-    // Find an editor tab
+
     let editorTabNode: FlexLayout.TabNode | null = null;
     let editorTabsetNode: FlexLayout.TabSetNode | null = null;
-    
+
     layoutModel.visitNodes((node) => {
-      if (node.getType() === 'tab') {
-        const tabNode = node as FlexLayout.TabNode;
-        if (tabNode.getComponent() === 'editor') {
-          editorTabNode = tabNode;
-          // Find parent tabset
-          const parent = tabNode.getParent();
-          if (parent && parent.getType() === 'tabset') {
-            editorTabsetNode = parent as FlexLayout.TabSetNode;
-          }
-        }
-      }
+      if (node.getType() !== "tab") return;
+      const tabNode = node as FlexLayout.TabNode;
+      if (tabNode.getComponent() !== "editor") return;
+      editorTabNode = tabNode;
+
+      const parent = tabNode.getParent();
+      if (parent && parent.getType() === "tabset") editorTabsetNode = parent as FlexLayout.TabSetNode;
     });
-    
+
     if (editorTabNode && editorTabsetNode) {
-      // Select the editor tab
       layoutModel.doAction(FlexLayout.Actions.selectTab(editorTabNode.getId()));
-    } else {
-      // No editor exists, create one in the first tabset
-      let firstTabset: FlexLayout.TabSetNode | null = null;
-      layoutModel.visitNodes((node) => {
-        if (node.getType() === 'tabset' && !firstTabset) {
-          firstTabset = node as FlexLayout.TabSetNode;
-        }
-      });
-      
-      if (firstTabset) {
-        layoutModel.doAction(
-          FlexLayout.Actions.addNode(
-            {
-              type: 'tab',
-              name: 'Editor',
-              component: 'editor',
-            },
-            firstTabset.getId(),
-            FlexLayout.DockLocation.CENTER,
-            -1
-          )
-        );
-      }
+      return;
+    }
+
+    // Create one in first tabset
+    let firstTabset: FlexLayout.TabSetNode | null = null;
+    layoutModel.visitNodes((node) => {
+      if (!firstTabset && node.getType() === "tabset") firstTabset = node as FlexLayout.TabSetNode;
+    });
+
+    if (firstTabset) {
+      layoutModel.doAction(
+        FlexLayout.Actions.addNode(
+          { type: "tab", name: "Editor", component: "editor" },
+          firstTabset.getId(),
+          FlexLayout.DockLocation.CENTER,
+          -1,
+        ),
+      );
     }
   },
 
   submitBuild: async (runAfterBuild = false) => {
     const { currentProject, syncTabsToProject, addBuildLog, clearBuildLogs, addConsoleMessage } = get();
-    
+
     if (!currentProject) {
-      addConsoleMessage('error', 'No project selected');
+      addConsoleMessage("error", "No project selected");
       return;
     }
+
+    // Kill previous stream + watchdog (FIX for frequent builds)
+    unsubscribeCurrentBuild?.();
+    unsubscribeCurrentBuild = null;
+    clearBuildWatchdog();
 
     // Sync dirty tabs first
     syncTabsToProject();
 
-    // Clear previous build state
+    // Reset build UI state
     clearBuildLogs();
-    set({ isBuilding: true, buildPhase: 'queued', buildError: null, pendingHotReload: false });
-    addConsoleMessage('info', 'Starting build...');
-    addBuildLog('status', 'Build queued...');
+    set({ isBuilding: true, buildPhase: "queued", buildError: null, pendingHotReload: false });
+    addConsoleMessage("info", "Starting build...");
+    addBuildLog("status", "Build queued...");
 
     try {
-      // Get fresh project state after sync
       const freshProject = get().currentProject;
-      if (!freshProject) throw new Error('Project not found');
+      if (!freshProject) throw new Error("Project not found");
 
-      // Flatten files
       const allFiles = flattenFiles(freshProject.files);
-      
-      // Filter source files
-      const cFiles = allFiles.filter((f) => f.name.endsWith('.c'));
-      const cppFiles = allFiles.filter((f) => f.name.endsWith('.cpp') || f.name.endsWith('.cc'));
-      const headerFiles = allFiles.filter((f) => f.name.endsWith('.h') || f.name.endsWith('.hpp'));
+
+      const cFiles = allFiles.filter((f) => f.name.endsWith(".c"));
+      const cppFiles = allFiles.filter((f) => f.name.endsWith(".cpp") || f.name.endsWith(".cc"));
+      const headerFiles = allFiles.filter((f) => f.name.endsWith(".h") || f.name.endsWith(".hpp"));
 
       if (cFiles.length === 0 && cppFiles.length === 0) {
-        throw new Error('No C or C++ source files found');
+        throw new Error("No C or C++ source files found");
       }
 
-      // Determine language and entry file
-      const language = cppFiles.length > 0 ? 'cpp' : 'c';
-      const sourceFiles = language === 'cpp' ? cppFiles : cFiles;
-      
-      // Find main file (prefer main.c or main.cpp)
-      const mainFile = sourceFiles.find((f) => f.name === 'main.c' || f.name === 'main.cpp') || sourceFiles[0];
+      const language = cppFiles.length > 0 ? "cpp" : "c";
+      const sourceFiles = language === "cpp" ? cppFiles : cFiles;
 
-      // Build request with all source and header files
-      const filesToSend = [...sourceFiles, ...headerFiles].map((f) => ({
-        path: f.path,
-        content: f.content,
-      }));
+      const mainFile = sourceFiles.find((f) => f.name === "main.c" || f.name === "main.cpp") ?? sourceFiles[0];
 
-      addBuildLog('status', `Submitting ${filesToSend.length} files...`);
+      const filesToSend = [...sourceFiles, ...headerFiles].map((f) => ({ path: f.path, content: f.content }));
 
-      // Submit build
+      addBuildLog("status", `Submitting ${filesToSend.length} files...`);
+
       const response = await apiSubmitBuild({
         files: filesToSend,
         entry: mainFile.path,
-        language: language as 'c' | 'cpp',
+        language: language as "c" | "cpp",
       });
 
-      set({ lastBuildId: response.buildId });
-      addBuildLog('status', `Build ID: ${response.buildId}`);
+      // Track current build as "active" so stale events can't mess with state
+      activeBuildId = response.buildId;
 
-      // Subscribe to build events
-      subscribeToBuildEvents(
+      set({ lastBuildId: response.buildId });
+      addBuildLog("status", `Build ID: ${response.buildId}`);
+
+      // Watchdog: if we never receive any events (SSE stall), unlock UI
+      startBuildWatchdog(() => {
+        // Only fail if this build is still the active one
+        if (activeBuildId !== response.buildId) return;
+
+        unsubscribeCurrentBuild?.();
+        unsubscribeCurrentBuild = null;
+
+        set({ isBuilding: false, buildPhase: "error", buildError: "Build timed out (no events received)" });
+        get().addBuildLog("stderr", "Build timed out (no events received)");
+        get().addConsoleMessage("error", "Build timed out (no events received)");
+      }, 20_000);
+
+      unsubscribeCurrentBuild = subscribeToBuildEvents(
         response.buildId,
         (event) => {
+          // Ignore any event from older builds
+          if (activeBuildId !== response.buildId) return;
+
+          // Any event means stream is alive -> refresh watchdog
+          startBuildWatchdog(() => {
+            if (activeBuildId !== response.buildId) return;
+
+            unsubscribeCurrentBuild?.();
+            unsubscribeCurrentBuild = null;
+
+            set({ isBuilding: false, buildPhase: "error", buildError: "Build timed out (stalled)" });
+            get().addBuildLog("stderr", "Build timed out (stalled)");
+            get().addConsoleMessage("error", "Build timed out (stalled)");
+          }, 20_000);
+
           const { addBuildLog, addConsoleMessage } = get();
 
-          if (event.type === 'status' && event.phase) {
-            set({ buildPhase: event.phase as BuildPhase });
-            addBuildLog('status', event.phase);
-          } else if (event.type === 'log' && event.message) {
-            const logType = event.stream === 'stderr' ? 'stderr' : 'stdout';
+          if (event.type === "status") {
+            const phase = normalizePhase(event.phase ?? event.message);
+            set({ buildPhase: phase });
+            if (event.phase) addBuildLog("status", event.phase);
+            else if (event.message) addBuildLog("status", event.message);
+            return;
+          }
+
+          if (event.type === "log" && event.message) {
+            const logType = event.stream === "stderr" ? "stderr" : "stdout";
             addBuildLog(logType, event.message);
-          } else if (event.type === 'done') {
+            return;
+          }
+
+          if (event.type === "error") {
+            clearBuildWatchdog();
+            unsubscribeCurrentBuild?.();
+            unsubscribeCurrentBuild = null;
+
+            set({
+              isBuilding: false,
+              buildPhase: "error",
+              buildError: event.message || "Unknown error",
+            });
+            addBuildLog("stderr", event.message || "Build error");
+            addConsoleMessage("error", event.message || "Build error");
+            return;
+          }
+
+          if (event.type === "done") {
+            clearBuildWatchdog();
+            unsubscribeCurrentBuild?.();
+            unsubscribeCurrentBuild = null;
+
             if (event.success) {
-              // Always use getPreviewUrl to ensure we use the correct API base URL
               const previewUrl = getPreviewUrl(response.buildId);
               set({
-                isBuilding: false, 
-                buildPhase: 'success', 
+                isBuilding: false,
+                buildPhase: "success",
                 lastPreviewUrl: previewUrl,
                 pendingHotReload: runAfterBuild,
               });
-              addBuildLog('status', 'Build completed successfully!');
-              addConsoleMessage('success', 'Build completed successfully!');
+              addBuildLog("status", "Build completed successfully!");
+              addConsoleMessage("success", "Build completed successfully!");
             } else {
-              set({ isBuilding: false, buildPhase: 'error', buildError: 'Build failed' });
-              addBuildLog('stderr', 'Build failed');
-              addConsoleMessage('error', 'Build failed');
+              set({
+                isBuilding: false,
+                buildPhase: "error",
+                buildError: event.message || "Build failed",
+              });
+              addBuildLog("stderr", event.message || "Build failed");
+              addConsoleMessage("error", event.message || "Build failed");
             }
-          } else if (event.type === 'error') {
-            set({ isBuilding: false, buildPhase: 'error', buildError: event.message || 'Unknown error' });
-            addBuildLog('stderr', event.message || 'Build error');
-            addConsoleMessage('error', event.message || 'Build error');
           }
         },
         (error) => {
-          console.error('Build event stream error:', error);
-          set({ isBuilding: false, buildPhase: 'error', buildError: error.message });
-          get().addConsoleMessage('error', `Build stream error: ${error.message}`);
-        }
+          // Ignore errors for stale builds
+          if (activeBuildId !== response.buildId) return;
+
+          clearBuildWatchdog();
+          unsubscribeCurrentBuild?.();
+          unsubscribeCurrentBuild = null;
+
+          set({ isBuilding: false, buildPhase: "error", buildError: error.message });
+          get().addConsoleMessage("error", `Build stream error: ${error.message}`);
+          get().addBuildLog("stderr", `Build stream error: ${error.message}`);
+        },
       );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ isBuilding: false, buildPhase: 'error', buildError: errorMessage });
-      addBuildLog('stderr', errorMessage);
-      addConsoleMessage('error', `Build failed: ${errorMessage}`);
+    } catch (err) {
+      clearBuildWatchdog();
+      unsubscribeCurrentBuild?.();
+      unsubscribeCurrentBuild = null;
+
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      set({ isBuilding: false, buildPhase: "error", buildError: msg });
+      get().addBuildLog("stderr", msg);
+      get().addConsoleMessage("error", `Build failed: ${msg}`);
     }
   },
 
-  addCollaborator: (collaborator) => {
-    set((state) => ({
-      collaborators: [...state.collaborators, collaborator],
-    }));
-  },
+  addCollaborator: (collaborator) => set((state) => ({ collaborators: [...state.collaborators, collaborator] })),
 
-  removeCollaborator: (id) => {
-    set((state) => ({
-      collaborators: state.collaborators.filter((c) => c.id !== id),
-    }));
-  },
+  removeCollaborator: (id) => set((state) => ({ collaborators: state.collaborators.filter((c) => c.id !== id) })),
 
-  updateCollaboratorCursor: (id, cursor) => {
+  updateCollaboratorCursor: (id, cursor) =>
     set((state) => ({
-      collaborators: state.collaborators.map((c) =>
-        c.id === id ? { ...c, cursor } : c
-      ),
-    }));
-  },
+      collaborators: state.collaborators.map((c) => (c.id === id ? { ...c, cursor } : c)),
+    })),
 
   // ============ File Operations ============
 
@@ -541,25 +606,17 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject, openTabs } = get();
     if (!currentProject) return;
 
-    const renameInTree = (files: ProjectFile[]): ProjectFile[] => {
-      return files.map((file) => {
-        if (file.id === id) {
-          return { ...file, name: newName };
-        }
-        if (file.children) {
-          return { ...file, children: renameInTree(file.children) };
-        }
+    const renameInTree = (files: ProjectFile[]): ProjectFile[] =>
+      files.map((file) => {
+        if (file.id === id) return { ...file, name: newName };
+        if (file.children) return { ...file, children: renameInTree(file.children) };
         return file;
       });
-    };
 
     const updatedFiles = renameInTree(currentProject.files);
     const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
 
-    // Also update open tabs if the renamed file is open
-    const updatedTabs = openTabs.map((tab) =>
-      tab.fileId === id ? { ...tab, fileName: newName } : tab
-    );
+    const updatedTabs = openTabs.map((tab) => (tab.fileId === id ? { ...tab, fileName: newName } : tab));
 
     set((state) => ({
       currentProject: updatedProject,
@@ -572,8 +629,10 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject } = get();
     if (!currentProject) return;
 
-    // Helper to find and remove nodes from tree
-    const removeFromTree = (files: ProjectFile[], ids: string[]): { remaining: ProjectFile[]; removed: ProjectFile[] } => {
+    const removeFromTree = (
+      files: ProjectFile[],
+      ids: string[],
+    ): { remaining: ProjectFile[]; removed: ProjectFile[] } => {
       const removed: ProjectFile[] = [];
       const remaining = files
         .filter((file) => {
@@ -584,36 +643,42 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           return true;
         })
         .map((file) => {
-          if (file.children) {
-            const result = removeFromTree(file.children, ids);
-            removed.push(...result.removed);
-            return { ...file, children: result.remaining };
-          }
-          return file;
+          if (!file.children) return file;
+          const res = removeFromTree(file.children, ids);
+          removed.push(...res.removed);
+          return { ...file, children: res.remaining };
         });
       return { remaining, removed };
     };
 
-    // Helper to insert nodes into tree at position
-    const insertIntoTree = (files: ProjectFile[], targetParentId: string | null, insertIndex: number, nodesToInsert: ProjectFile[]): ProjectFile[] => {
+    const insertIntoTree = (
+      files: ProjectFile[],
+      targetParentId: string | null,
+      insertIndex: number,
+      nodesToInsert: ProjectFile[],
+    ): ProjectFile[] => {
       if (targetParentId === null) {
-        // Insert at root level
         const result = [...files];
-        const safeIndex = Math.min(insertIndex, result.length);
-        result.splice(safeIndex, 0, ...nodesToInsert.map((n) => ({ ...n, parentId: undefined })));
+        result.splice(
+          Math.min(insertIndex, result.length),
+          0,
+          ...nodesToInsert.map((n) => ({ ...n, parentId: undefined })),
+        );
         return result;
       }
 
       return files.map((file) => {
         if (file.id === targetParentId && file.children) {
-          const newChildren = [...file.children];
-          const safeIndex = Math.min(insertIndex, newChildren.length);
-          newChildren.splice(safeIndex, 0, ...nodesToInsert.map((n) => ({ ...n, parentId: targetParentId })));
-          return { ...file, children: newChildren };
+          const children = [...file.children];
+          children.splice(
+            Math.min(insertIndex, children.length),
+            0,
+            ...nodesToInsert.map((n) => ({ ...n, parentId: targetParentId })),
+          );
+          return { ...file, children };
         }
-        if (file.children) {
+        if (file.children)
           return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex, nodesToInsert) };
-        }
         return file;
       });
     };
@@ -633,33 +698,33 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     if (!currentProject) return null;
 
     const newFile: ProjectFile = {
-      id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: type === 'folder' ? 'New Folder' : 'untitled.c',
-      content: type === 'folder' ? '' : '// New file\n',
-      language: type === 'folder' ? 'folder' : 'c',
-      isFolder: type === 'folder',
-      children: type === 'folder' ? [] : undefined,
+      id: nowId("file"),
+      name: type === "folder" ? "New Folder" : "untitled.c",
+      content: type === "folder" ? "" : "// New file\n",
+      language: type === "folder" ? "folder" : "c",
+      isFolder: type === "folder",
+      children: type === "folder" ? [] : undefined,
       parentId: parentId ?? undefined,
     };
 
-    const insertIntoTree = (files: ProjectFile[], targetParentId: string | null, insertIndex: number): ProjectFile[] => {
+    const insertIntoTree = (
+      files: ProjectFile[],
+      targetParentId: string | null,
+      insertIndex: number,
+    ): ProjectFile[] => {
       if (targetParentId === null) {
         const result = [...files];
-        const safeIndex = Math.min(insertIndex, result.length);
-        result.splice(safeIndex, 0, newFile);
+        result.splice(Math.min(insertIndex, result.length), 0, newFile);
         return result;
       }
 
       return files.map((file) => {
         if (file.id === targetParentId && file.children) {
-          const newChildren = [...file.children];
-          const safeIndex = Math.min(insertIndex, newChildren.length);
-          newChildren.splice(safeIndex, 0, newFile);
-          return { ...file, children: newChildren };
+          const children = [...file.children];
+          children.splice(Math.min(insertIndex, children.length), 0, newFile);
+          return { ...file, children };
         }
-        if (file.children) {
-          return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex) };
-        }
+        if (file.children) return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex) };
         return file;
       });
     };
@@ -679,50 +744,41 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject, openTabs } = get();
     if (!currentProject) return;
 
-    // Collect all IDs to delete (including children of folders)
     const collectAllIds = (files: ProjectFile[], targetIds: string[]): string[] => {
-      const allIds: string[] = [];
-      const traverse = (file: ProjectFile) => {
-        if (targetIds.includes(file.id)) {
-          allIds.push(file.id);
-          if (file.children) {
-            file.children.forEach(traverse);
-          }
-        } else if (file.children) {
-          file.children.forEach(traverse);
+      const all: string[] = [];
+      const walk = (f: ProjectFile) => {
+        if (targetIds.includes(f.id)) {
+          all.push(f.id);
+          f.children?.forEach(walk);
+        } else {
+          f.children?.forEach(walk);
         }
       };
-      files.forEach(traverse);
-      return [...new Set([...targetIds, ...allIds])];
+      files.forEach(walk);
+      return [...new Set([...targetIds, ...all])];
     };
 
     const allIdsToDelete = collectAllIds(currentProject.files, ids);
 
-    const removeFromTree = (files: ProjectFile[]): ProjectFile[] => {
-      return files
-        .filter((file) => !allIdsToDelete.includes(file.id))
-        .map((file) => {
-          if (file.children) {
-            return { ...file, children: removeFromTree(file.children) };
-          }
-          return file;
-        });
-    };
+    const removeFromTree = (files: ProjectFile[]): ProjectFile[] =>
+      files
+        .filter((f) => !allIdsToDelete.includes(f.id))
+        .map((f) => (f.children ? { ...f, children: removeFromTree(f.children) } : f));
 
     const updatedFiles = removeFromTree(currentProject.files);
     const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
 
-    // Close any tabs for deleted files
-    const remainingTabs = openTabs.filter((tab) => !allIdsToDelete.includes(tab.fileId));
-    const newActiveTabId = remainingTabs.length > 0 ? remainingTabs[remainingTabs.length - 1].id : null;
+    const remainingTabs = openTabs.filter((t) => !allIdsToDelete.includes(t.fileId));
+    const newActiveTabId = remainingTabs.length ? remainingTabs[remainingTabs.length - 1].id : null;
 
     set((state) => ({
       currentProject: updatedProject,
       projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
       openTabs: remainingTabs,
-      activeTabId: state.activeTabId && allIdsToDelete.includes(
-        openTabs.find((t) => t.id === state.activeTabId)?.fileId || ''
-      ) ? newActiveTabId : state.activeTabId,
+      activeTabId:
+        state.activeTabId && allIdsToDelete.includes(openTabs.find((t) => t.id === state.activeTabId)?.fileId || "")
+          ? newActiveTabId
+          : state.activeTabId,
     }));
   },
 }));
