@@ -264,13 +264,7 @@
   background: hsl(var(--muted-foreground));
 }
 
-/* TLDraw container */
-.tldraw-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.tldraw-container .tl-theme__dark {
-  --color-background: hsl(var(--editor-bg));
+/* Excalidraw container */
+.excalidraw {
+  --color-primary: hsl(var(--primary)) !important;
 }

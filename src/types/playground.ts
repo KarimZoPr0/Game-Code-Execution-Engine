@@ -40,7 +40,7 @@ export interface Collaborator {
   activeFile?: string;
 }
 
-export type PanelType = 'editor' | 'preview' | 'console' | 'filetree' | 'tldraw';
+export type PanelType = 'editor' | 'preview' | 'console' | 'filetree' | 'tldraw' | 'excalidraw';
 
 export type BuildPhase = 'idle' | 'queued' | 'compiling' | 'linking' | 'success' | 'error';
 
