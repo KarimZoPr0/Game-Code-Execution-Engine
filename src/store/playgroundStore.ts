@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { Project, ProjectFile, OpenTab, ConsoleMessage, Collaborator, BuildTarget } from '@/types/playground';
+import { Project, ProjectFile, OpenTab, ConsoleMessage, Collaborator, BuildPhase, BuildLogEntry } from '@/types/playground';
+import { submitBuild as apiSubmitBuild, subscribeToBuildEvents, getBuildResult, getPreviewUrl } from '@/lib/api';
 
 const defaultMainC = `#include <stdio.h>
 #include <SDL2/SDL.h>
@@ -160,7 +161,13 @@ interface PlaygroundState {
   consoleMessages: ConsoleMessage[];
   collaborators: Collaborator[];
   isBuilding: boolean;
-  buildTarget: BuildTarget;
+  
+  // Build state
+  lastBuildId: string | null;
+  lastPreviewUrl: string | null;
+  buildPhase: BuildPhase;
+  buildLogs: BuildLogEntry[];
+  buildError: string | null;
   
   // Actions
   setCurrentProject: (project: Project) => void;
@@ -171,7 +178,13 @@ interface PlaygroundState {
   updateFileContent: (tabId: string, content: string) => void;
   addConsoleMessage: (type: ConsoleMessage['type'], message: string) => void;
   clearConsole: () => void;
-  startBuild: (target: BuildTarget) => void;
+  
+  // Build actions
+  submitBuild: () => Promise<void>;
+  addBuildLog: (type: BuildLogEntry['type'], message: string) => void;
+  clearBuildLogs: () => void;
+  syncTabsToProject: () => void;
+  
   addCollaborator: (collaborator: Collaborator) => void;
   removeCollaborator: (id: string) => void;
   updateCollaboratorCursor: (id: string, cursor: { x: number; y: number }) => void;
@@ -182,6 +195,21 @@ interface PlaygroundState {
   createFile: (parentId: string | null, index: number, type: 'file' | 'folder') => ProjectFile | null;
   deleteFiles: (ids: string[]) => void;
 }
+
+// Helper to flatten file tree
+const flattenFiles = (files: ProjectFile[], parentPath = ''): { path: string; content: string; name: string }[] => {
+  const result: { path: string; content: string; name: string }[] = [];
+  for (const file of files) {
+    const filePath = parentPath ? `${parentPath}/${file.name}` : file.name;
+    if (!file.isFolder) {
+      result.push({ path: filePath, content: file.content, name: file.name });
+    }
+    if (file.children) {
+      result.push(...flattenFiles(file.children, filePath));
+    }
+  }
+  return result;
+};
 
 export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   projects: [defaultProject],
@@ -196,7 +224,13 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     { id: '1', name: 'You', color: '#2dd4bf' },
   ],
   isBuilding: false,
-  buildTarget: 'all',
+  
+  // Build state
+  lastBuildId: null,
+  lastPreviewUrl: null,
+  buildPhase: 'idle',
+  buildLogs: [],
+  buildError: null,
 
   setCurrentProject: (project) => set({ currentProject: project }),
 
@@ -285,20 +319,162 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   clearConsole: () => set({ consoleMessages: [] }),
 
-  startBuild: (target) => {
-    set({ isBuilding: true, buildTarget: target });
-    const { addConsoleMessage } = get();
-    
-    addConsoleMessage('info', `Starting build: ${target}...`);
-    
-    setTimeout(() => {
-      addConsoleMessage('info', 'Compiling source files...');
-    }, 500);
+  // Sync dirty tabs back to project files
+  syncTabsToProject: () => {
+    const { currentProject, openTabs } = get();
+    if (!currentProject) return;
 
-    setTimeout(() => {
-      addConsoleMessage('success', `Build ${target} completed successfully!`);
-      set({ isBuilding: false });
-    }, 2000);
+    const dirtyTabs = openTabs.filter((tab) => tab.isDirty);
+    if (dirtyTabs.length === 0) return;
+
+    const updateFileInTree = (files: ProjectFile[], fileId: string, newContent: string): ProjectFile[] => {
+      return files.map((file) => {
+        if (file.id === fileId) {
+          return { ...file, content: newContent };
+        }
+        if (file.children) {
+          return { ...file, children: updateFileInTree(file.children, fileId, newContent) };
+        }
+        return file;
+      });
+    };
+
+    let updatedFiles = currentProject.files;
+    for (const tab of dirtyTabs) {
+      updatedFiles = updateFileInTree(updatedFiles, tab.fileId, tab.content);
+    }
+
+    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+    
+    // Mark tabs as not dirty
+    const updatedTabs = openTabs.map((tab) => ({ ...tab, isDirty: false }));
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+      openTabs: updatedTabs,
+    }));
+  },
+
+  // Build actions
+  addBuildLog: (type, message) => {
+    const newLog: BuildLogEntry = {
+      id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      type,
+      message,
+      timestamp: new Date(),
+    };
+    set((state) => ({
+      buildLogs: [...state.buildLogs, newLog],
+    }));
+  },
+
+  clearBuildLogs: () => set({ buildLogs: [], buildError: null }),
+
+  submitBuild: async () => {
+    const { currentProject, syncTabsToProject, addBuildLog, clearBuildLogs, addConsoleMessage } = get();
+    
+    if (!currentProject) {
+      addConsoleMessage('error', 'No project selected');
+      return;
+    }
+
+    // Sync dirty tabs first
+    syncTabsToProject();
+
+    // Clear previous build state
+    clearBuildLogs();
+    set({ isBuilding: true, buildPhase: 'queued', buildError: null });
+    addConsoleMessage('info', 'Starting build...');
+    addBuildLog('status', 'Build queued...');
+
+    try {
+      // Get fresh project state after sync
+      const freshProject = get().currentProject;
+      if (!freshProject) throw new Error('Project not found');
+
+      // Flatten files
+      const allFiles = flattenFiles(freshProject.files);
+      
+      // Filter source files
+      const cFiles = allFiles.filter((f) => f.name.endsWith('.c'));
+      const cppFiles = allFiles.filter((f) => f.name.endsWith('.cpp') || f.name.endsWith('.cc'));
+      const headerFiles = allFiles.filter((f) => f.name.endsWith('.h') || f.name.endsWith('.hpp'));
+
+      if (cFiles.length === 0 && cppFiles.length === 0) {
+        throw new Error('No C or C++ source files found');
+      }
+
+      // Determine language and entry file
+      const language = cppFiles.length > 0 ? 'cpp' : 'c';
+      const sourceFiles = language === 'cpp' ? cppFiles : cFiles;
+      
+      // Find main file (prefer main.c or main.cpp)
+      const mainFile = sourceFiles.find((f) => f.name === 'main.c' || f.name === 'main.cpp') || sourceFiles[0];
+
+      // Build request with all source and header files
+      const filesToSend = [...sourceFiles, ...headerFiles].map((f) => ({
+        path: f.path,
+        content: f.content,
+      }));
+
+      addBuildLog('status', `Submitting ${filesToSend.length} files...`);
+
+      // Submit build
+      const response = await apiSubmitBuild({
+        files: filesToSend,
+        entry: mainFile.path,
+        language: language as 'c' | 'cpp',
+      });
+
+      set({ lastBuildId: response.buildId });
+      addBuildLog('status', `Build ID: ${response.buildId}`);
+
+      // Subscribe to build events
+      subscribeToBuildEvents(
+        response.buildId,
+        (event) => {
+          const { addBuildLog, addConsoleMessage } = get();
+
+          if (event.type === 'status' && event.phase) {
+            set({ buildPhase: event.phase as BuildPhase });
+            addBuildLog('status', event.phase);
+          } else if (event.type === 'log' && event.message) {
+            const logType = event.stream === 'stderr' ? 'stderr' : 'stdout';
+            addBuildLog(logType, event.message);
+          } else if (event.type === 'done') {
+            if (event.success) {
+              const previewUrl = event.previewUrl || getPreviewUrl(response.buildId);
+              set({ 
+                isBuilding: false, 
+                buildPhase: 'success', 
+                lastPreviewUrl: previewUrl 
+              });
+              addBuildLog('status', 'Build completed successfully!');
+              addConsoleMessage('success', 'Build completed successfully!');
+            } else {
+              set({ isBuilding: false, buildPhase: 'error', buildError: 'Build failed' });
+              addBuildLog('stderr', 'Build failed');
+              addConsoleMessage('error', 'Build failed');
+            }
+          } else if (event.type === 'error') {
+            set({ isBuilding: false, buildPhase: 'error', buildError: event.message || 'Unknown error' });
+            addBuildLog('stderr', event.message || 'Build error');
+            addConsoleMessage('error', event.message || 'Build error');
+          }
+        },
+        (error) => {
+          console.error('Build event stream error:', error);
+          set({ isBuilding: false, buildPhase: 'error', buildError: error.message });
+          get().addConsoleMessage('error', `Build stream error: ${error.message}`);
+        }
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      set({ isBuilding: false, buildPhase: 'error', buildError: errorMessage });
+      addBuildLog('stderr', errorMessage);
+      addConsoleMessage('error', `Build failed: ${errorMessage}`);
+    }
   },
 
   addCollaborator: (collaborator) => {
@@ -498,7 +674,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const updatedFiles = removeFromTree(currentProject.files);
     const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
 
-    // Close tabs for deleted files
+    // Close any tabs for deleted files
     const remainingTabs = openTabs.filter((tab) => !allIdsToDelete.includes(tab.fileId));
     const newActiveTabId = remainingTabs.length > 0 ? remainingTabs[remainingTabs.length - 1].id : null;
 
@@ -506,9 +682,9 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       currentProject: updatedProject,
       projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
       openTabs: remainingTabs,
-      activeTabId: allIdsToDelete.includes(state.openTabs.find((t) => t.id === state.activeTabId)?.fileId ?? '')
-        ? newActiveTabId
-        : state.activeTabId,
+      activeTabId: state.activeTabId && allIdsToDelete.includes(
+        openTabs.find((t) => t.id === state.activeTabId)?.fileId || ''
+      ) ? newActiveTabId : state.activeTabId,
     }));
   },
 }));

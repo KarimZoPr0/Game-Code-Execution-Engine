@@ -42,4 +42,11 @@ export interface Collaborator {
 
 export type PanelType = 'editor' | 'preview' | 'console' | 'filetree' | 'tldraw';
 
-export type BuildTarget = 'all' | 'game' | 'main';
+export type BuildPhase = 'idle' | 'queued' | 'compiling' | 'linking' | 'success' | 'error';
+
+export interface BuildLogEntry {
+  id: string;
+  type: 'stdout' | 'stderr' | 'status';
+  message: string;
+  timestamp: Date;
+}

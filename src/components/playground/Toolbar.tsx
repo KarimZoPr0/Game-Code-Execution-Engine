@@ -5,7 +5,8 @@ import {
   Plus, 
   Settings, 
   Users,
-  FolderPlus
+  FolderPlus,
+  Loader2
 } from 'lucide-react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import {
@@ -24,7 +25,6 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { BuildTarget } from '@/types/playground';
 
 interface ToolbarProps {
   onAddPanel: (type: string) => void;
@@ -37,7 +37,8 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
     setCurrentProject, 
     createProject, 
     isBuilding, 
-    startBuild,
+    buildPhase,
+    submitBuild,
     collaborators 
   } = usePlaygroundStore();
   
@@ -52,8 +53,18 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
     }
   };
 
-  const handleBuild = (target: BuildTarget) => {
-    startBuild(target);
+  const handleBuild = () => {
+    submitBuild();
+  };
+
+  const getBuildButtonText = () => {
+    if (!isBuilding) return 'Build';
+    switch (buildPhase) {
+      case 'queued': return 'Queued...';
+      case 'compiling': return 'Compiling...';
+      case 'linking': return 'Linking...';
+      default: return 'Building...';
+    }
   };
 
   return (
@@ -94,32 +105,20 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
 
         {/* Center section - Build controls */}
         <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button 
-                variant="default" 
-                size="sm" 
-                disabled={isBuilding}
-                className="gap-2"
-              >
-                <Hammer className="w-4 h-4" />
-                {isBuilding ? 'Building...' : 'Build'}
-                <ChevronDown className="w-3 h-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => handleBuild('all')}>
-                <span className="font-medium">Build All</span>
-                <span className="ml-auto text-xs text-muted-foreground">⌘B</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleBuild('game')}>
-                <span>Build Game</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleBuild('main')}>
-                <span>Build Main</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Button 
+            variant="default" 
+            size="sm" 
+            disabled={isBuilding}
+            onClick={handleBuild}
+            className="gap-2"
+          >
+            {isBuilding ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Hammer className="w-4 h-4" />
+            )}
+            {getBuildButtonText()}
+          </Button>
         </div>
 
         {/* Right section */}
