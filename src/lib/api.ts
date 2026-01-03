@@ -77,6 +77,22 @@ export function subscribeToBuildEvents(
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_DELAY = 2000;
 
+  // track whether we ever got a terminal event
+  let gotTerminalEvent = false;
+
+  const scheduleReconnect = () => {
+    if (closed) return;
+
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      reconnectTimer = setTimeout(() => {
+        if (!closed) connect();
+      }, RECONNECT_DELAY);
+    } else {
+      onError(new Error("Build event stream disconnected (max reconnect attempts reached)"));
+    }
+  };
+
   const connect = async () => {
     if (closed) return;
 
@@ -86,7 +102,7 @@ export function subscribeToBuildEvents(
       const response = await fetch(`${API_BASE_URL}/api/build/${buildId}/events`, {
         headers: {
           Accept: "text/event-stream",
-          "ngrok-skip-browser-warning": "true", // Skip ngrok warning page
+          "ngrok-skip-browser-warning": "true",
         },
         credentials: "include",
         signal: abortController.signal,
@@ -109,14 +125,16 @@ export function subscribeToBuildEvents(
         const { done, value } = await reader.read();
 
         if (done) {
-          // Connection closed normally (build completed)
-          break;
+          // Stream ended. If we didn't receive a terminal event, treat this as an unexpected disconnect
+          // and reconnect (or ultimately error out).
+          if (!gotTerminalEvent && !closed) {
+            scheduleReconnect();
+          }
+          return; // exit connect()
         }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-
-        // Keep the last incomplete line in buffer
         buffer = lines.pop() || "";
 
         for (const line of lines) {
@@ -125,13 +143,14 @@ export function subscribeToBuildEvents(
               const data = JSON.parse(line.slice(6)) as BuildEvent;
               onEvent(data);
 
-              // Close on done or error
+              // Terminal events must end the stream from the UI perspective
               if (data.type === "done" || data.type === "error") {
+                gotTerminalEvent = true;
                 closed = true;
                 return;
               }
 
-              // Reset reconnect attempts on successful event
+              // Optional: treat any status as "connection is alive"
               if (data.type === "status") {
                 reconnectAttempts = 0;
               }
@@ -139,34 +158,19 @@ export function subscribeToBuildEvents(
               console.error("Failed to parse build event:", e);
             }
           } else if (line === ": heartbeat" || line.trim() === "") {
-            // Ignore heartbeat messages and empty lines
             continue;
           }
         }
       }
-
-      // Connection closed normally, no need to reconnect
-      reconnectAttempts = 0;
     } catch (error) {
       if (closed) return;
 
       if (error instanceof Error && error.name === "AbortError") {
-        // Cleanup, not an error
-        return;
+        return; // aborted intentionally
       }
 
-      // Only reconnect if we haven't exceeded max attempts
-      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !closed) {
-        reconnectAttempts++;
-        reconnectTimer = setTimeout(() => {
-          if (!closed) {
-            connect();
-          }
-        }, RECONNECT_DELAY);
-      } else {
-        // Max reconnection attempts reached or connection failed
-        onError(error instanceof Error ? error : new Error("Build event stream disconnected"));
-      }
+      // Reconnect on errors, up to max attempts
+      scheduleReconnect();
     }
   };
 
