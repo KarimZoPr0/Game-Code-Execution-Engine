@@ -42,7 +42,7 @@ export interface Collaborator {
 
 export type PanelType = 'editor' | 'preview' | 'console' | 'filetree' | 'tldraw' | 'excalidraw';
 
-export type BuildPhase = 'idle' | 'queued' | 'compiling' | 'linking' | 'success' | 'error';
+export type BuildPhase = 'idle' | 'queued' | 'compiling' | 'linking' | 'building' | 'success' | 'error';
 
 export interface BuildLogEntry {
   id: string;
