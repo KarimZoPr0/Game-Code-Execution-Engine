@@ -1,6 +1,5 @@
 // API client for communicating with the backend build server
-const API_BASE_URL =
-  " https://shantell-pinchable-lividly.ngrok-free.dev" || "https://shantell-pinchable-lividly.ngrok-free.dev";
+const API_BASE_URL = "https://shantell-pinchable-lividly.ngrok-free.dev";
 
 export interface BuildFile {
   path: string;
