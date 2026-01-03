@@ -1,14 +1,15 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import * as FlexLayout from 'flexlayout-react';
 import 'flexlayout-react/style/dark.css';
 import FileTree from './FileTree';
 import MonacoEditor from './MonacoEditor';
 import Console from './Console';
 import GamePreview from './GamePreview';
-import TldrawPanel from './TldrawPanel';
+import ExcalidrawPanel from './ExcalidrawPanel';
 import Toolbar from './Toolbar';
 import { PanelType } from '@/types/playground';
 import { Plus } from 'lucide-react';
+import { usePlaygroundStore } from '@/store/playgroundStore';
 
 const defaultLayout: FlexLayout.IJsonModel = {
   global: {
@@ -98,7 +99,7 @@ const AddPanelMenu: React.FC<AddPanelMenuProps> = ({ x, y, onSelect, onClose }) 
     { label: 'Game Preview', type: 'preview' as PanelType },
     { label: 'Console', type: 'console' as PanelType },
     { label: 'File Tree', type: 'filetree' as PanelType },
-    { label: 'Drawing Board', type: 'tldraw' as PanelType },
+    { label: 'Drawing Board', type: 'excalidraw' as PanelType },
   ];
 
   React.useEffect(() => {
@@ -135,6 +136,13 @@ const PlaygroundLayout: React.FC = () => {
   const modelRef = useRef<FlexLayout.Model>(FlexLayout.Model.fromJson(defaultLayout));
   const layoutRef = useRef<FlexLayout.Layout>(null);
   const [menuState, setMenuState] = useState<{ x: number; y: number; tabsetId: string } | null>(null);
+  
+  const { setLayoutModel } = usePlaygroundStore();
+
+  // Store the model reference for use by FileTree
+  useEffect(() => {
+    setLayoutModel(modelRef.current);
+  }, [setLayoutModel]);
 
   const factory = useCallback((node: FlexLayout.TabNode) => {
     const component = node.getComponent();
@@ -148,8 +156,8 @@ const PlaygroundLayout: React.FC = () => {
         return <Console />;
       case 'preview':
         return <GamePreview />;
-      case 'tldraw':
-        return <TldrawPanel />;
+      case 'excalidraw':
+        return <ExcalidrawPanel />;
       default:
         return <div className="p-4 text-muted-foreground">Unknown panel: {component}</div>;
     }
@@ -163,7 +171,8 @@ const PlaygroundLayout: React.FC = () => {
       preview: { name: 'Preview', component: 'preview' },
       console: { name: 'Console', component: 'console' },
       filetree: { name: 'Files', component: 'filetree' },
-      tldraw: { name: 'Drawing', component: 'tldraw' },
+      tldraw: { name: 'Drawing', component: 'excalidraw' },
+      excalidraw: { name: 'Drawing', component: 'excalidraw' },
     };
 
     const config = panelConfig[type];
@@ -201,7 +210,8 @@ const PlaygroundLayout: React.FC = () => {
       preview: { name: 'Preview', component: 'preview' },
       console: { name: 'Console', component: 'console' },
       filetree: { name: 'Files', component: 'filetree' },
-      tldraw: { name: 'Drawing', component: 'tldraw' },
+      tldraw: { name: 'Drawing', component: 'excalidraw' },
+      excalidraw: { name: 'Drawing', component: 'excalidraw' },
     };
 
     const config = panelConfig[type];

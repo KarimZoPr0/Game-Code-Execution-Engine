@@ -1,153 +1,130 @@
 import { create } from 'zustand';
 import { Project, ProjectFile, OpenTab, ConsoleMessage, Collaborator, BuildPhase, BuildLogEntry } from '@/types/playground';
 import { submitBuild as apiSubmitBuild, subscribeToBuildEvents, getBuildResult, getPreviewUrl } from '@/lib/api';
+import * as FlexLayout from 'flexlayout-react';
 
-const defaultMainC = `#include <stdio.h>
-#include <SDL2/SDL.h>
+const defaultMainC = `#include <SDL2/SDL.h>
+#include <emscripten.h>
+#include <stdbool.h>
+
+// Window dimensions
+#define SCREEN_WIDTH 640
+#define SCREEN_HEIGHT 480
+
+// Game state
+typedef struct {
+    SDL_Window* window;
+    SDL_Renderer* renderer;
+    bool running;
+    // Square position and velocity
+    float x, y;
+    float vx, vy;
+    int size;
+} GameState;
+
+GameState game;
+
+void init() {
+    SDL_Init(SDL_INIT_VIDEO);
+    
+    game.window = SDL_CreateWindow(
+        "Nexus Engine - SDL Demo",
+        SDL_WINDOWPOS_CENTERED,
+        SDL_WINDOWPOS_CENTERED,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+        0
+    );
+    
+    game.renderer = SDL_CreateRenderer(game.window, -1, SDL_RENDERER_ACCELERATED);
+    game.running = true;
+    
+    // Initialize square in center
+    game.size = 50;
+    game.x = (SCREEN_WIDTH - game.size) / 2.0f;
+    game.y = (SCREEN_HEIGHT - game.size) / 2.0f;
+    game.vx = 3.0f;
+    game.vy = 2.0f;
+}
+
+void handle_events() {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+            case SDL_QUIT:
+                game.running = false;
+                break;
+            case SDL_KEYDOWN:
+                // Press R to reset position
+                if (event.key.keysym.sym == SDLK_r) {
+                    game.x = (SCREEN_WIDTH - game.size) / 2.0f;
+                    game.y = (SCREEN_HEIGHT - game.size) / 2.0f;
+                }
+                break;
+        }
+    }
+}
+
+void update() {
+    // Move the square
+    game.x += game.vx;
+    game.y += game.vy;
+    
+    // Bounce off walls
+    if (game.x <= 0 || game.x + game.size >= SCREEN_WIDTH) {
+        game.vx = -game.vx;
+        game.x = game.x <= 0 ? 0 : SCREEN_WIDTH - game.size;
+    }
+    if (game.y <= 0 || game.y + game.size >= SCREEN_HEIGHT) {
+        game.vy = -game.vy;
+        game.y = game.y <= 0 ? 0 : SCREEN_HEIGHT - game.size;
+    }
+}
+
+void render() {
+    // Clear with dark blue background
+    SDL_SetRenderDrawColor(game.renderer, 30, 41, 59, 255);
+    SDL_RenderClear(game.renderer);
+    
+    // Draw the bouncing square (indigo color)
+    SDL_SetRenderDrawColor(game.renderer, 99, 102, 241, 255);
+    SDL_Rect rect = {
+        (int)game.x,
+        (int)game.y,
+        game.size,
+        game.size
+    };
+    SDL_RenderFillRect(game.renderer, &rect);
+    
+    // Present
+    SDL_RenderPresent(game.renderer);
+}
+
+void main_loop() {
+    handle_events();
+    update();
+    render();
+}
 
 int main(int argc, char* argv[]) {
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        printf("SDL could not initialize! SDL_Error: %s\\n", SDL_GetError());
-        return 1;
-    }
-
-    SDL_Window* window = SDL_CreateWindow(
-        "SDL Game",
-        SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED,
-        800, 600,
-        SDL_WINDOW_SHOWN
-    );
-
-    if (window == NULL) {
-        printf("Window could not be created! SDL_Error: %s\\n", SDL_GetError());
-        return 1;
-    }
-
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    init();
     
-    int running = 1;
-    SDL_Event event;
-
-    while (running) {
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                running = 0;
-            }
-        }
-
-        SDL_SetRenderDrawColor(renderer, 20, 20, 30, 255);
-        SDL_RenderClear(renderer);
-        
-        // Draw a cyan rectangle
-        SDL_SetRenderDrawColor(renderer, 45, 212, 191, 255);
-        SDL_Rect rect = {350, 250, 100, 100};
-        SDL_RenderFillRect(renderer, &rect);
-        
-        SDL_RenderPresent(renderer);
-    }
-
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+    // Use emscripten's main loop for web builds
+    emscripten_set_main_loop(main_loop, 60, 1);
+    
+    // Cleanup (won't reach here in web build)
+    SDL_DestroyRenderer(game.renderer);
+    SDL_DestroyWindow(game.window);
     SDL_Quit();
+    
     return 0;
 }`;
-
-const defaultGameC = `#include "game.h"
-#include <SDL2/SDL.h>
-
-static int player_x = 400;
-static int player_y = 300;
-static int player_speed = 5;
-
-void game_init(void) {
-    player_x = 400;
-    player_y = 300;
-}
-
-void game_update(const Uint8* keys) {
-    if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) {
-        player_y -= player_speed;
-    }
-    if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN]) {
-        player_y += player_speed;
-    }
-    if (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT]) {
-        player_x -= player_speed;
-    }
-    if (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) {
-        player_x += player_speed;
-    }
-}
-
-void game_render(SDL_Renderer* renderer) {
-    // Draw player
-    SDL_SetRenderDrawColor(renderer, 45, 212, 191, 255);
-    SDL_Rect player_rect = {player_x - 25, player_y - 25, 50, 50};
-    SDL_RenderFillRect(renderer, &player_rect);
-}
-
-void game_cleanup(void) {
-    // Cleanup game resources
-}`;
-
-const defaultGameH = `#ifndef GAME_H
-#define GAME_H
-
-#include <SDL2/SDL.h>
-
-void game_init(void);
-void game_update(const Uint8* keys);
-void game_render(SDL_Renderer* renderer);
-void game_cleanup(void);
-
-#endif`;
-
-const defaultMakefile = `CC = gcc
-CFLAGS = -Wall -Wextra -std=c99
-LDFLAGS = -lSDL2 -lSDL2_image -lSDL2_ttf
-
-SRC = src/main.c src/game.c
-OBJ = $(SRC:.c=.o)
-TARGET = game
-
-all: $(TARGET)
-
-$(TARGET): $(OBJ)
-\t$(CC) $(OBJ) -o $@ $(LDFLAGS)
-
-%.o: %.c
-\t$(CC) $(CFLAGS) -c $< -o $@
-
-game:
-\t$(CC) $(CFLAGS) src/game.c -c -o src/game.o
-\t$(CC) src/game.o -o game_module $(LDFLAGS)
-
-main:
-\t$(CC) $(CFLAGS) src/main.c -c -o src/main.o
-
-clean:
-\trm -f $(OBJ) $(TARGET)
-
-.PHONY: all clean game main`;
 
 const defaultProject: Project = {
   id: 'default-project',
   name: 'My SDL Game',
   files: [
-    {
-      id: 'src',
-      name: 'src',
-      content: '',
-      language: 'folder',
-      isFolder: true,
-      children: [
-        { id: 'main-c', name: 'main.c', content: defaultMainC, language: 'c', isFolder: false, parentId: 'src' },
-        { id: 'game-c', name: 'game.c', content: defaultGameC, language: 'c', isFolder: false, parentId: 'src' },
-        { id: 'game-h', name: 'game.h', content: defaultGameH, language: 'c', isFolder: false, parentId: 'src' },
-      ],
-    },
-    { id: 'makefile', name: 'Makefile', content: defaultMakefile, language: 'makefile', isFolder: false },
+    { id: 'main-c', name: 'main.c', content: defaultMainC, language: 'c', isFolder: false },
   ],
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -168,6 +145,10 @@ interface PlaygroundState {
   buildPhase: BuildPhase;
   buildLogs: BuildLogEntry[];
   buildError: string | null;
+  pendingHotReload: boolean;
+  
+  // Layout model reference
+  layoutModel: FlexLayout.Model | null;
   
   // Actions
   setCurrentProject: (project: Project) => void;
@@ -180,10 +161,15 @@ interface PlaygroundState {
   clearConsole: () => void;
   
   // Build actions
-  submitBuild: () => Promise<void>;
+  submitBuild: (runAfterBuild?: boolean) => Promise<void>;
   addBuildLog: (type: BuildLogEntry['type'], message: string) => void;
   clearBuildLogs: () => void;
   syncTabsToProject: () => void;
+  clearPendingHotReload: () => void;
+  
+  // Layout actions
+  setLayoutModel: (model: FlexLayout.Model) => void;
+  ensureEditorVisible: () => void;
   
   addCollaborator: (collaborator: Collaborator) => void;
   removeCollaborator: (id: string) => void;
@@ -231,6 +217,10 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   buildPhase: 'idle',
   buildLogs: [],
   buildError: null,
+  pendingHotReload: false,
+  
+  // Layout
+  layoutModel: null,
 
   setCurrentProject: (project) => set({ currentProject: project }),
 
@@ -239,16 +229,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       id: `project-${Date.now()}`,
       name,
       files: [
-        {
-          id: `src-${Date.now()}`,
-          name: 'src',
-          content: '',
-          language: 'folder',
-          isFolder: true,
-          children: [
-            { id: `main-${Date.now()}`, name: 'main.c', content: '// Start coding here\n#include <stdio.h>\n\nint main() {\n    printf("Hello, World!\\n");\n    return 0;\n}\n', language: 'c', isFolder: false },
-          ],
-        },
+        { id: `main-${Date.now()}`, name: 'main.c', content: '// Start coding here\n#include <stdio.h>\n\nint main() {\n    printf("Hello, World!\\n");\n    return 0;\n}\n', language: 'c', isFolder: false },
       ],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -370,8 +351,63 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   },
 
   clearBuildLogs: () => set({ buildLogs: [], buildError: null }),
+  
+  clearPendingHotReload: () => set({ pendingHotReload: false }),
+  
+  setLayoutModel: (model) => set({ layoutModel: model }),
+  
+  ensureEditorVisible: () => {
+    const { layoutModel } = get();
+    if (!layoutModel) return;
+    
+    // Find an editor tab
+    let editorTabNode: FlexLayout.TabNode | null = null;
+    let editorTabsetNode: FlexLayout.TabSetNode | null = null;
+    
+    layoutModel.visitNodes((node) => {
+      if (node.getType() === 'tab') {
+        const tabNode = node as FlexLayout.TabNode;
+        if (tabNode.getComponent() === 'editor') {
+          editorTabNode = tabNode;
+          // Find parent tabset
+          const parent = tabNode.getParent();
+          if (parent && parent.getType() === 'tabset') {
+            editorTabsetNode = parent as FlexLayout.TabSetNode;
+          }
+        }
+      }
+    });
+    
+    if (editorTabNode && editorTabsetNode) {
+      // Select the editor tab
+      layoutModel.doAction(FlexLayout.Actions.selectTab(editorTabNode.getId()));
+    } else {
+      // No editor exists, create one in the first tabset
+      let firstTabset: FlexLayout.TabSetNode | null = null;
+      layoutModel.visitNodes((node) => {
+        if (node.getType() === 'tabset' && !firstTabset) {
+          firstTabset = node as FlexLayout.TabSetNode;
+        }
+      });
+      
+      if (firstTabset) {
+        layoutModel.doAction(
+          FlexLayout.Actions.addNode(
+            {
+              type: 'tab',
+              name: 'Editor',
+              component: 'editor',
+            },
+            firstTabset.getId(),
+            FlexLayout.DockLocation.CENTER,
+            -1
+          )
+        );
+      }
+    }
+  },
 
-  submitBuild: async () => {
+  submitBuild: async (runAfterBuild = false) => {
     const { currentProject, syncTabsToProject, addBuildLog, clearBuildLogs, addConsoleMessage } = get();
     
     if (!currentProject) {
@@ -384,7 +420,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
     // Clear previous build state
     clearBuildLogs();
-    set({ isBuilding: true, buildPhase: 'queued', buildError: null });
+    set({ isBuilding: true, buildPhase: 'queued', buildError: null, pendingHotReload: false });
     addConsoleMessage('info', 'Starting build...');
     addBuildLog('status', 'Build queued...');
 
@@ -448,7 +484,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
               set({ 
                 isBuilding: false, 
                 buildPhase: 'success', 
-                lastPreviewUrl: previewUrl 
+                lastPreviewUrl: previewUrl,
+                pendingHotReload: runAfterBuild,
               });
               addBuildLog('status', 'Build completed successfully!');
               addConsoleMessage('success', 'Build completed successfully!');

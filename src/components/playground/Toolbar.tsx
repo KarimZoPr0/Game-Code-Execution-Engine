@@ -6,7 +6,8 @@ import {
   Settings, 
   Users,
   FolderPlus,
-  Loader2
+  Loader2,
+  Play
 } from 'lucide-react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import {
@@ -54,7 +55,11 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
   };
 
   const handleBuild = () => {
-    submitBuild();
+    submitBuild(false);
+  };
+
+  const handleBuildAndRun = () => {
+    submitBuild(true);
   };
 
   const getBuildButtonText = () => {
@@ -105,20 +110,34 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
 
         {/* Center section - Build controls */}
         <div className="flex items-center gap-2">
-          <Button 
-            variant="default" 
-            size="sm" 
-            disabled={isBuilding}
-            onClick={handleBuild}
-            className="gap-2"
-          >
-            {isBuilding ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Hammer className="w-4 h-4" />
-            )}
-            {getBuildButtonText()}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                variant="default" 
+                size="sm" 
+                disabled={isBuilding}
+                className="gap-2"
+              >
+                {isBuilding ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Hammer className="w-4 h-4" />
+                )}
+                {getBuildButtonText()}
+                <ChevronDown className="w-3 h-3 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center">
+              <DropdownMenuItem onClick={handleBuild} disabled={isBuilding}>
+                <Hammer className="w-4 h-4 mr-2" />
+                Build
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleBuildAndRun} disabled={isBuilding}>
+                <Play className="w-4 h-4 mr-2" />
+                Build & Run
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Right section */}
@@ -144,7 +163,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
               <DropdownMenuItem onClick={() => onAddPanel('filetree')}>
                 File Tree
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAddPanel('tldraw')}>
+              <DropdownMenuItem onClick={() => onAddPanel('excalidraw')}>
                 Drawing Board
               </DropdownMenuItem>
             </DropdownMenuContent>

@@ -28,7 +28,7 @@ const convertToTreeData = (files: ProjectFile[]): TreeNode[] => {
 
 // Custom Node Renderer
 const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
-  const { openFile, openTabs, activeTabId } = usePlaygroundStore();
+  const { openFile, openTabs, activeTabId, ensureEditorVisible } = usePlaygroundStore();
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const isActive = activeTab?.fileId === node.data.data.id;
   const isFolder = node.isInternal;
@@ -61,6 +61,8 @@ const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
     
     // Open file on click (not folders)
     if (!isFolder) {
+      // Ensure an editor is visible first
+      ensureEditorVisible();
       openFile(node.data.data);
     }
   };
@@ -124,7 +126,7 @@ const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
 };
 
 const FileTree: React.FC = () => {
-  const { currentProject, renameFile, moveFiles, createFile, deleteFiles, openFile } = usePlaygroundStore();
+  const { currentProject, renameFile, moveFiles, createFile, deleteFiles, openFile, ensureEditorVisible } = usePlaygroundStore();
   const { ref, width, height } = useResizeObserver<HTMLDivElement>();
   const treeRef = useRef<TreeApi<TreeNode> | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -198,9 +200,10 @@ const FileTree: React.FC = () => {
   // Activate handler - open file when activated
   const handleActivate = useCallback((node: NodeApi<TreeNode>) => {
     if (!node.isInternal) {
+      ensureEditorVisible();
       openFile(node.data.data);
     }
-  }, [openFile]);
+  }, [openFile, ensureEditorVisible]);
 
   // Search match function
   const searchMatch = useCallback((node: NodeApi<TreeNode>, term: string) => {
