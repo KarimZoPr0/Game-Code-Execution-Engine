@@ -77,7 +77,7 @@ export function subscribeToBuildEvents(
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_DELAY = 2000;
 
-  // track whether we ever got a terminal event
+  // NEW: track whether we ever got a terminal event
   let gotTerminalEvent = false;
 
   const scheduleReconnect = () => {
@@ -125,6 +125,7 @@ export function subscribeToBuildEvents(
         const { done, value } = await reader.read();
 
         if (done) {
+          // IMPORTANT FIX:
           // Stream ended. If we didn't receive a terminal event, treat this as an unexpected disconnect
           // and reconnect (or ultimately error out).
           if (!gotTerminalEvent && !closed) {
