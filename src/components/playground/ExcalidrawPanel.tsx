@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { Excalidraw, THEME } from "@excalidraw/excalidraw";
+import type { ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { usePlaygroundStore } from "@/store/playgroundStore";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,25 +8,37 @@ import { getExcalidrawDrawing, saveExcalidrawDrawing } from "@/lib/storage/index
 import { syncExcalidrawToCloud, fetchCloudExcalidrawDrawing } from "@/lib/storage/cloudSync";
 import { Loader2 } from "lucide-react";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ExcalidrawData = any;
+type ExcalidrawTheme = (typeof THEME)[keyof typeof THEME];
+
+interface ExcalidrawData {
+  elements?: readonly unknown[];
+  appState?: {
+    theme?: string;
+    viewBackgroundColor?: string;
+    [key: string]: unknown;
+  };
+  files?: Record<string, unknown>;
+}
 
 const DEFAULT_BG = "#1a1a24";
 
-function toTheme(value: unknown): THEME {
+function toTheme(value: unknown): ExcalidrawTheme {
   return value === "light" ? THEME.LIGHT : THEME.DARK;
+}
+
+function isExcalidrawData(data: unknown): data is ExcalidrawData {
+  return typeof data === "object" && data !== null;
 }
 
 export default function ExcalidrawPanel() {
   const { currentProject } = usePlaygroundStore();
   const { user } = useAuth();
 
-  const [initialData, setInitialData] = useState<ExcalidrawData>(null);
+  const [initialData, setInitialData] = useState<ExcalidrawInitialDataState | null>(null);
   const [loading, setLoading] = useState(true);
   const [key, setKey] = useState(0);
 
-  // ✅ controlled theme so Alt+Shift+D actually updates the UI
-  const [theme, setTheme] = useState<THEME>(THEME.DARK);
+  const [theme, setTheme] = useState<ExcalidrawTheme>(THEME.DARK);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const projectIdRef = useRef<string | null>(null);
@@ -40,28 +53,28 @@ export default function ExcalidrawPanel() {
 
       try {
         // Try local first
-        let drawing = await getExcalidrawDrawing(currentProject.id);
+        let rawDrawing = await getExcalidrawDrawing(currentProject.id);
 
         // If authenticated and no local drawing, try cloud
-        if (!drawing && user) {
-          drawing = await fetchCloudExcalidrawDrawing(user.id, currentProject.id);
-          if (drawing) {
-            await saveExcalidrawDrawing(currentProject.id, drawing);
+        if (!rawDrawing && user) {
+          rawDrawing = await fetchCloudExcalidrawDrawing(user.id, currentProject.id);
+          if (rawDrawing) {
+            await saveExcalidrawDrawing(currentProject.id, rawDrawing);
           }
         }
 
-        if (drawing) {
-          // ✅ pick up saved theme if present
-          const loadedTheme = toTheme(drawing?.appState?.theme);
+        if (rawDrawing && isExcalidrawData(rawDrawing)) {
+          const drawing = rawDrawing;
+          const loadedTheme = toTheme(drawing.appState?.theme);
           setTheme(loadedTheme);
 
-          // ✅ ensure background exists (don’t overwrite if already set)
           setInitialData({
-            ...drawing,
+            elements: drawing.elements as ExcalidrawInitialDataState["elements"],
             appState: {
               ...drawing.appState,
-              viewBackgroundColor: drawing?.appState?.viewBackgroundColor ?? DEFAULT_BG,
-            },
+              viewBackgroundColor: drawing.appState?.viewBackgroundColor ?? DEFAULT_BG,
+            } as ExcalidrawInitialDataState["appState"],
+            files: drawing.files as ExcalidrawInitialDataState["files"],
           });
         } else {
           // Default empty canvas (dark)
@@ -71,7 +84,7 @@ export default function ExcalidrawPanel() {
             appState: {
               theme: "dark",
               viewBackgroundColor: DEFAULT_BG,
-            },
+            } as ExcalidrawInitialDataState["appState"],
           });
         }
 
@@ -85,7 +98,7 @@ export default function ExcalidrawPanel() {
           appState: {
             theme: "dark",
             viewBackgroundColor: DEFAULT_BG,
-          },
+          } as ExcalidrawInitialDataState["appState"],
         });
         setKey((k) => k + 1);
       } finally {
@@ -102,10 +115,10 @@ export default function ExcalidrawPanel() {
 
   // Debounced save + sync theme from Excalidraw appState (shortcut/UI)
   const handleChange = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (elements: readonly unknown[], appState: any) => {
       if (!currentProject || projectIdRef.current !== currentProject.id) return;
 
-      // ✅ keep our controlled theme in sync so Alt+Shift+D works
       if (appState?.theme) {
         setTheme(toTheme(appState.theme));
       }

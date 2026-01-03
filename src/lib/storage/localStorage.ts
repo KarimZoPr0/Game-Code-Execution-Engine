@@ -1,11 +1,13 @@
 // localStorage keys
 const KEYS = {
   LAYOUT: 'codeforge-layout',
-  OPEN_TABS: 'codeforge-open-tabs',
-  ACTIVE_TAB_ID: 'codeforge-active-tab-id',
   CURRENT_PROJECT_ID: 'codeforge-current-project-id',
   LAST_BUILD: 'codeforge-last-build',
 } as const;
+
+// Helper to create per-project keys
+const projectTabsKey = (projectId: string) => `codeforge-tabs-${projectId}`;
+const projectActiveTabKey = (projectId: string) => `codeforge-active-tab-${projectId}`;
 
 // ============ Layout ============
 
@@ -25,7 +27,7 @@ export function saveLayout(layoutJson: string): void {
   }
 }
 
-// ============ Tabs ============
+// ============ Tabs (Per-Project) ============
 
 interface StoredTab {
   id: string;
@@ -34,37 +36,37 @@ interface StoredTab {
   language: string;
 }
 
-export function getStoredTabs(): StoredTab[] {
+export function getStoredTabs(projectId: string): StoredTab[] {
   try {
-    const data = localStorage.getItem(KEYS.OPEN_TABS);
+    const data = localStorage.getItem(projectTabsKey(projectId));
     return data ? JSON.parse(data) : [];
   } catch {
     return [];
   }
 }
 
-export function saveTabs(tabs: StoredTab[]): void {
+export function saveTabs(projectId: string, tabs: StoredTab[]): void {
   try {
-    localStorage.setItem(KEYS.OPEN_TABS, JSON.stringify(tabs));
+    localStorage.setItem(projectTabsKey(projectId), JSON.stringify(tabs));
   } catch (e) {
     console.warn('Failed to save tabs to localStorage:', e);
   }
 }
 
-export function getActiveTabId(): string | null {
+export function getActiveTabId(projectId: string): string | null {
   try {
-    return localStorage.getItem(KEYS.ACTIVE_TAB_ID);
+    return localStorage.getItem(projectActiveTabKey(projectId));
   } catch {
     return null;
   }
 }
 
-export function saveActiveTabId(tabId: string | null): void {
+export function saveActiveTabId(projectId: string, tabId: string | null): void {
   try {
     if (tabId) {
-      localStorage.setItem(KEYS.ACTIVE_TAB_ID, tabId);
+      localStorage.setItem(projectActiveTabKey(projectId), tabId);
     } else {
-      localStorage.removeItem(KEYS.ACTIVE_TAB_ID);
+      localStorage.removeItem(projectActiveTabKey(projectId));
     }
   } catch (e) {
     console.warn('Failed to save active tab ID to localStorage:', e);

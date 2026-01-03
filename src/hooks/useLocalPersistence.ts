@@ -2,14 +2,11 @@ import { useEffect, useRef, useCallback } from 'react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import {
   getAllProjects,
-  saveProject,
   saveAllProjects,
 } from '@/lib/storage/indexedDB';
 import {
   getStoredTabs,
-  saveTabs,
   getActiveTabId,
-  saveActiveTabId,
   getCurrentProjectId,
   saveCurrentProjectId,
   getLastBuild,
@@ -106,6 +103,18 @@ const createDefaultProject = (): Project => ({
   updatedAt: new Date(),
 });
 
+// Helper to find file in tree
+const findFileInTree = (files: Project['files'], fileId: string): Project['files'][0] | undefined => {
+  for (const f of files) {
+    if (f.id === fileId) return f;
+    if (f.children) {
+      const found = findFileInTree(f.children, fileId);
+      if (found) return found;
+    }
+  }
+  return undefined;
+};
+
 export function useLocalPersistence() {
   const initialized = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -113,8 +122,6 @@ export function useLocalPersistence() {
   const {
     projects,
     currentProject,
-    openTabs,
-    activeTabId,
     lastBuildId,
     lastPreviewUrl,
   } = usePlaygroundStore();
@@ -140,23 +147,12 @@ export function useLocalPersistence() {
         const savedProjectId = getCurrentProjectId();
         const currentProj = loadedProjects.find((p) => p.id === savedProjectId) || loadedProjects[0];
 
-        // Load saved tabs and restore with content from current project
-        const savedTabs = getStoredTabs();
+        // Load saved tabs for THIS project (per-project tabs)
+        const savedTabs = getStoredTabs(currentProj.id);
         const restoredTabs: OpenTab[] = [];
 
-        const findFile = (files: typeof currentProj.files, id: string): typeof currentProj.files[0] | undefined => {
-          for (const f of files) {
-            if (f.id === id) return f;
-            if (f.children) {
-              const found = findFile(f.children, id);
-              if (found) return found;
-            }
-          }
-          return undefined;
-        };
-
         for (const tab of savedTabs) {
-          const file = findFile(currentProj.files, tab.fileId);
+          const file = findFileInTree(currentProj.files, tab.fileId);
           if (file && !file.isFolder) {
             restoredTabs.push({
               id: tab.id,
@@ -169,8 +165,8 @@ export function useLocalPersistence() {
           }
         }
 
-        // Restore active tab
-        const savedActiveTabId = getActiveTabId();
+        // Restore active tab for THIS project
+        const savedActiveTabId = getActiveTabId(currentProj.id);
         const activeTab = restoredTabs.find((t) => t.id === savedActiveTabId);
 
         // Load last build info
@@ -184,7 +180,7 @@ export function useLocalPersistence() {
           projects: loadedProjects,
           currentProject: currentProj,
           openTabs: restoredTabs,
-          activeTabId: activeTab?.id || null,
+          activeTabId: activeTab?.id || (restoredTabs.length > 0 ? restoredTabs[0].id : null),
           ...buildState,
         });
       } catch (error) {
@@ -221,23 +217,6 @@ export function useLocalPersistence() {
     if (!initialized.current || !currentProject) return;
     saveCurrentProjectId(currentProject.id);
   }, [currentProject?.id]);
-
-  // Save tabs
-  useEffect(() => {
-    if (!initialized.current) return;
-    saveTabs(openTabs.map((t) => ({
-      id: t.id,
-      fileId: t.fileId,
-      fileName: t.fileName,
-      language: t.language,
-    })));
-  }, [openTabs]);
-
-  // Save active tab ID
-  useEffect(() => {
-    if (!initialized.current) return;
-    saveActiveTabId(activeTabId);
-  }, [activeTabId]);
 
   // Save last build info
   useEffect(() => {
