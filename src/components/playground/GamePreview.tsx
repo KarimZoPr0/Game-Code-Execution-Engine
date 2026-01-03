@@ -18,9 +18,14 @@ const GamePreview: React.FC = () => {
 
   // Handle hot-reload when Build & Run completes
   useEffect(() => {
-    if (pendingHotReload && isRunning && lastPreviewUrl) {
-      // Hot-swap: just reload the iframe
-      setIframeKey(prev => prev + 1);
+    if (pendingHotReload && lastPreviewUrl) {
+      if (isRunning) {
+        // Hot-swap: just reload the iframe
+        setIframeKey(prev => prev + 1);
+      } else {
+        // Auto-start: begin running
+        setIsRunning(true);
+      }
       clearPendingHotReload();
     }
   }, [pendingHotReload, isRunning, lastPreviewUrl, clearPendingHotReload]);
