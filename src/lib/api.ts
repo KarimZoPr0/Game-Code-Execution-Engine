@@ -1,5 +1,5 @@
 // API client for communicating with the backend build server
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://shantell-pinchable-lividly.ngrok-free.dev';
 
 export interface BuildFile {
   path: string;
