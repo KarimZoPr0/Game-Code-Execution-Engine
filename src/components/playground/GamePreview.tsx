@@ -10,71 +10,79 @@ const GamePreview: React.FC = () => {
 
   const [isRunning, setIsRunning] = useState(false);
 
-  // Double-buffer state
+  // Double-buffer
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<PreviewStatus>("idle");
 
-  // Track the latest "load request" to ignore stale events
-  const loadTokenRef = useRef(0);
+  // We swap ONLY when we get preview-ready for THIS buildId
+  const pendingBuildIdRef = useRef<string | null>(null);
 
-  // Optional: to avoid cache weirdness during dev, you can keep it (safe to remove in prod)
-  const effectivePreviewUrl = useMemo(() => {
-    if (!lastPreviewUrl) return null;
-    return `${lastPreviewUrl}${lastPreviewUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
-  }, [lastPreviewUrl]);
+  // Use buildId as the version (DON'T add Date.now(); it defeats caching and slows reload)
+  const next = useMemo(() => {
+    if (!lastBuildId || !lastPreviewUrl) return null;
+    return { buildId: lastBuildId, url: lastPreviewUrl };
+  }, [lastBuildId, lastPreviewUrl]);
 
-  // When Build & Run completes, preload the new preview invisibly, then swap
-  useEffect(() => {
-    if (!pendingHotReload || !effectivePreviewUrl) return;
-
-    // Make sure we actually start running
-    setIsRunning(true);
-
-    // Start loading hidden iframe
+  const startPending = (url: string, buildId: string) => {
+    pendingBuildIdRef.current = buildId;
+    setPendingUrl(url);
     setStatus("loading");
-    setPendingUrl(effectivePreviewUrl);
+  };
+
+  // Build & Run finished: immediately start loading the new iframe hidden
+  useEffect(() => {
+    if (!pendingHotReload || !next) return;
+
+    setIsRunning(true);
+    startPending(next.url, next.buildId);
 
     clearPendingHotReload();
-  }, [pendingHotReload, effectivePreviewUrl, clearPendingHotReload]);
+  }, [pendingHotReload, next, clearPendingHotReload]);
 
+  // First-run: if user hits play and we have a build but nothing loaded yet
   const handlePlay = () => {
-    if (!effectivePreviewUrl) return;
+    if (!next) return;
     setIsRunning(true);
 
-    // If nothing active yet, load it as pending and then swap in
-    if (!activeUrl) {
-      setStatus("loading");
-      setPendingUrl(effectivePreviewUrl);
+    if (!activeUrl && !pendingUrl) {
+      startPending(next.url, next.buildId);
     }
   };
 
-  const handlePause = () => {
-    setIsRunning(false);
-  };
+  const handlePause = () => setIsRunning(false);
 
   const handleFullscreen = () => {
     if (lastBuildId) window.open(`/preview/${lastBuildId}`, "_blank");
   };
 
-  const canPlay = !!effectivePreviewUrl;
+  // Listen for preview-ready from the iframe (sent by backend wrapper)
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!e?.data || e.data.type !== "preview-ready") return;
+
+      const buildId = String(e.data.buildId ?? "");
+      if (!buildId) return;
+
+      // Only accept ready for the currently pending build
+      if (pendingBuildIdRef.current !== buildId) return;
+
+      // Promote pending -> active
+      setActiveUrl(pendingUrl);
+      setPendingUrl(null);
+      pendingBuildIdRef.current = null;
+      setStatus("ready");
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [pendingUrl]);
+
+  const canPlay = !!next;
   const showRunning = isRunning && (activeUrl || pendingUrl);
 
-  // Promote pending -> active once it finishes loading
-  const promotePending = (tokenAtStart: number) => {
-    // Ignore stale loads
-    if (tokenAtStart !== loadTokenRef.current) return;
-
-    setActiveUrl((prevActive) => {
-      // swap in pending
-      return pendingUrl ?? prevActive;
-    });
-    setPendingUrl(null);
-    setStatus("ready");
-  };
-
   return (
-    <div className="h-full flex flex-col bg-editor-bg">
+    <div className="h-full w-full flex flex-col">
       {/* Controls */}
       <div className="flex items-center justify-between px-3 py-2 bg-panel-header border-b border-panel-border">
         <div className="flex items-center gap-2">
@@ -96,7 +104,7 @@ const GamePreview: React.FC = () => {
 
         <div className="flex items-center gap-2">
           {isBuilding && <span className="text-xs text-muted-foreground capitalize">{buildPhase}</span>}
-          {buildPhase === "success" && !isBuilding && <span className="text-xs text-success">Ready</span>}
+          {status === "loading" && <span className="text-xs text-muted-foreground">Loading…</span>}
 
           <button
             onClick={handleFullscreen}
@@ -109,8 +117,8 @@ const GamePreview: React.FC = () => {
         </div>
       </div>
 
-      {/* Preview area */}
-      <div className="flex-1 bg-[#14141e] overflow-hidden relative">
+      {/* Preview area (NO forced background) */}
+      <div className="flex-1 overflow-hidden relative">
         {showRunning ? (
           <>
             {/* Active iframe (visible) */}
@@ -118,9 +126,10 @@ const GamePreview: React.FC = () => {
               <iframe
                 key={activeUrl}
                 src={activeUrl}
-                className="absolute inset-0 w-full h-full border-0"
+                className="absolute inset-0 w-full h-full border-0 block"
                 allow="autoplay; fullscreen"
                 title="Game Preview (active)"
+                sandbox="allow-scripts allow-same-origin allow-pointer-lock"
               />
             )}
 
@@ -129,24 +138,11 @@ const GamePreview: React.FC = () => {
               <iframe
                 key={pendingUrl}
                 src={pendingUrl}
-                className="absolute inset-0 w-full h-full border-0 opacity-0 pointer-events-none"
+                className="absolute inset-0 w-full h-full border-0 block opacity-0 pointer-events-none"
                 allow="autoplay; fullscreen"
                 title="Game Preview (pending)"
-                onLoad={() => {
-                  // Each time we start a new pending load, increment token so old loads can't swap
-                  // We do it here in a simple way:
-                  const token = ++loadTokenRef.current;
-                  // Promote on next tick to ensure pendingUrl is current in state
-                  setTimeout(() => promotePending(token), 0);
-                }}
+                sandbox="allow-scripts allow-same-origin allow-pointer-lock"
               />
-            )}
-
-            {/* Optional tiny “loading” hint; remove if you truly want zero notice */}
-            {status === "loading" && (
-              <div className="absolute top-2 right-2 z-10 px-2 py-1 rounded text-xs bg-black/60 text-muted-foreground">
-                Loading…
-              </div>
             )}
           </>
         ) : (
