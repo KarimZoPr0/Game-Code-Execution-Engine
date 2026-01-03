@@ -10,6 +10,7 @@ import Toolbar from './Toolbar';
 import { PanelType } from '@/types/playground';
 import { Plus } from 'lucide-react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
+import { getStoredLayout, saveLayout } from '@/lib/storage/localStorage';
 
 const defaultLayout: FlexLayout.IJsonModel = {
   global: {
@@ -133,7 +134,21 @@ const AddPanelMenu: React.FC<AddPanelMenuProps> = ({ x, y, onSelect, onClose }) 
 };
 
 const PlaygroundLayout: React.FC = () => {
-  const modelRef = useRef<FlexLayout.Model>(FlexLayout.Model.fromJson(defaultLayout));
+  // Try to load saved layout, fallback to default
+  const getInitialModel = () => {
+    const savedLayout = getStoredLayout();
+    if (savedLayout) {
+      try {
+        const parsed = JSON.parse(savedLayout);
+        return FlexLayout.Model.fromJson(parsed);
+      } catch (e) {
+        console.warn('Failed to parse saved layout, using default');
+      }
+    }
+    return FlexLayout.Model.fromJson(defaultLayout);
+  };
+
+  const modelRef = useRef<FlexLayout.Model>(getInitialModel());
   const layoutRef = useRef<FlexLayout.Layout>(null);
   const [menuState, setMenuState] = useState<{ x: number; y: number; tabsetId: string } | null>(null);
   
@@ -143,6 +158,16 @@ const PlaygroundLayout: React.FC = () => {
   useEffect(() => {
     setLayoutModel(modelRef.current);
   }, [setLayoutModel]);
+
+  // Save layout on model change
+  const handleModelChange = useCallback((model: FlexLayout.Model) => {
+    try {
+      const json = model.toJson();
+      saveLayout(JSON.stringify(json));
+    } catch (e) {
+      console.warn('Failed to save layout:', e);
+    }
+  }, []);
 
   const factory = useCallback((node: FlexLayout.TabNode) => {
     const component = node.getComponent();
@@ -264,6 +289,7 @@ const PlaygroundLayout: React.FC = () => {
           model={modelRef.current}
           factory={factory}
           onRenderTabSet={onRenderTabSet}
+          onModelChange={handleModelChange}
         />
       </div>
       

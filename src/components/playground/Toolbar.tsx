@@ -4,12 +4,16 @@ import {
   Hammer, 
   Plus, 
   Settings, 
-  Users,
   FolderPlus,
   Loader2,
-  Play
+  Play,
+  Cloud,
+  CloudOff,
+  RefreshCw
 } from 'lucide-react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
+import { useCloudSync, SyncStatus } from '@/hooks/useCloudSync';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import ProfileMenu from '@/components/profile/ProfileMenu';
 
 interface ToolbarProps {
   onAddPanel: (type: string) => void;
@@ -40,8 +45,10 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
     isBuilding, 
     buildPhase,
     submitBuild,
-    collaborators 
   } = usePlaygroundStore();
+  
+  const { user } = useAuth();
+  const { syncStatus } = useCloudSync();
   
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -169,29 +176,26 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Collaborators */}
-          <div className="flex items-center gap-1">
-            <div className="flex -space-x-2">
-              {collaborators.slice(0, 3).map((collab) => (
-                <div
-                  key={collab.id}
-                  className="w-7 h-7 rounded-full border-2 border-background flex items-center justify-center text-xs font-medium"
-                  style={{ backgroundColor: collab.color }}
-                  title={collab.name}
-                >
-                  {collab.name.charAt(0).toUpperCase()}
-                </div>
-              ))}
-              {collaborators.length > 3 && (
-                <div className="w-7 h-7 rounded-full bg-muted border-2 border-background flex items-center justify-center text-xs font-medium text-muted-foreground">
-                  +{collaborators.length - 3}
-                </div>
+          {/* Cloud sync status */}
+          {user && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground" title={`Sync status: ${syncStatus}`}>
+              {syncStatus === 'syncing' && (
+                <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+              )}
+              {syncStatus === 'synced' && (
+                <Cloud className="w-4 h-4 text-green-500" />
+              )}
+              {syncStatus === 'error' && (
+                <CloudOff className="w-4 h-4 text-destructive" />
+              )}
+              {syncStatus === 'idle' && (
+                <Cloud className="w-4 h-4" />
               )}
             </div>
-            <Button variant="ghost" size="icon" className="ml-1">
-              <Users className="w-4 h-4" />
-            </Button>
-          </div>
+          )}
+
+          {/* Profile / Sign In */}
+          <ProfileMenu />
 
           {/* Settings */}
           <Button variant="ghost" size="icon">
