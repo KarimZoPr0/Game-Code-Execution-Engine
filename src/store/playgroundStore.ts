@@ -10,16 +10,7 @@ import {
   BuildLogEntry,
 } from "@/types/playground";
 import { submitBuild as apiSubmitBuild, subscribeToBuildEvents, getPreviewUrl } from "@/lib/api";
-
-/**
- * Fixes + improvements (no feature loss):
- * - Prevents “Queued…” / stuck builds when building frequently:
- *   - Always unsubscribes previous SSE stream before starting a new build.
- *   - Adds a build watchdog timeout (if no events arrive, fail + unlock UI).
- *   - Ignores stale events from older builds (race-proof).
- * - Normalizes backend phases (init/compile/done/etc) to UI phases.
- * - Keeps existing file ops, tabs, console, collaborators, layout logic.
- */
+import { saveTabs, saveActiveTabId, getStoredTabs, getActiveTabId } from "@/lib/storage/localStorage";
 
 const defaultMainC = `#include <SDL2/SDL.h>
 #include <emscripten.h>
@@ -197,6 +188,10 @@ interface PlaygroundState {
   moveFiles: (dragIds: string[], parentId: string | null, index: number) => void;
   createFile: (parentId: string | null, index: number, type: "file" | "folder") => ProjectFile | null;
   deleteFiles: (ids: string[]) => void;
+
+  // Tab persistence helpers
+  loadTabsForProject: (projectId: string, files: ProjectFile[]) => void;
+  saveCurrentTabs: () => void;
 }
 
 /** Flatten file tree into compiler payload */
@@ -217,7 +212,6 @@ const normalizePhase = (phase?: string): BuildPhase => {
   if (!phase) return "queued";
   const p = phase.toLowerCase();
 
-  // backend examples: init, compile, building, done, cancelled
   if (p === "init" || p === "queued" || p.includes("wait")) return "queued";
   if (p === "compile" || p === "compiling") return "compiling";
   if (p === "link" || p === "linking") return "linking";
@@ -225,14 +219,26 @@ const normalizePhase = (phase?: string): BuildPhase => {
   if (p === "error" || p === "failed") return "error";
   if (p === "idle") return "idle";
 
-  // fallback
   return "building";
 };
 
-// ---- IMPORTANT: These are module-scoped to survive store re-renders ----
+// Helper to find file in tree
+const findFileInTree = (files: ProjectFile[], fileId: string): ProjectFile | undefined => {
+  for (const f of files) {
+    if (f.id === fileId) return f;
+    if (f.children) {
+      const found = findFileInTree(f.children, fileId);
+      if (found) return found;
+    }
+  }
+  return undefined;
+};
+
+// ---- Module-scoped variables ----
 let unsubscribeCurrentBuild: null | (() => void) = null;
 let buildWatchdog: null | ReturnType<typeof setTimeout> = null;
 let activeBuildId: string | null = null;
+let autoSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const clearBuildWatchdog = () => {
   if (buildWatchdog) {
@@ -269,9 +275,68 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   // Layout
   layoutModel: null,
 
-  setCurrentProject: (project) => set({ currentProject: project }),
+  setCurrentProject: (project) => {
+    const { currentProject, openTabs, activeTabId, saveCurrentTabs, loadTabsForProject } = get();
+    
+    // Save current project's tabs before switching
+    if (currentProject) {
+      saveCurrentTabs();
+    }
+    
+    // Switch project and load its tabs
+    set({ currentProject: project, openTabs: [], activeTabId: null });
+    loadTabsForProject(project.id, project.files);
+  },
+
+  loadTabsForProject: (projectId, files) => {
+    const savedTabs = getStoredTabs(projectId);
+    const restoredTabs: OpenTab[] = [];
+
+    for (const tab of savedTabs) {
+      const file = findFileInTree(files, tab.fileId);
+      if (file && !file.isFolder) {
+        restoredTabs.push({
+          id: tab.id,
+          fileId: tab.fileId,
+          fileName: file.name,
+          content: file.content,
+          language: file.language,
+          isDirty: false,
+        });
+      }
+    }
+
+    const savedActiveTabId = getActiveTabId(projectId);
+    const activeTab = restoredTabs.find((t) => t.id === savedActiveTabId);
+
+    set({
+      openTabs: restoredTabs,
+      activeTabId: activeTab?.id || (restoredTabs.length > 0 ? restoredTabs[0].id : null),
+    });
+  },
+
+  saveCurrentTabs: () => {
+    const { currentProject, openTabs, activeTabId } = get();
+    if (!currentProject) return;
+
+    saveTabs(
+      currentProject.id,
+      openTabs.map((t) => ({
+        id: t.id,
+        fileId: t.fileId,
+        fileName: t.fileName,
+        language: t.language,
+      }))
+    );
+    saveActiveTabId(currentProject.id, activeTabId);
+  },
 
   createProject: (name) => {
+    const { saveCurrentTabs } = get();
+    
+    // Save current tabs before switching
+    saveCurrentTabs();
+
     const projectId = `project-${Date.now()}`;
     const mainId = `main-${Date.now()}`;
     const newProject: Project = {
@@ -302,7 +367,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   openFile: (file) => {
     if (file.isFolder) return;
 
-    const existing = get().openTabs.find((t) => t.fileId === file.id);
+    const { openTabs, currentProject } = get();
+    const existing = openTabs.find((t) => t.fileId === file.id);
     if (existing) {
       set({ activeTabId: existing.id });
       return;
@@ -318,22 +384,67 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     };
 
     set((state) => ({ openTabs: [...state.openTabs, tab], activeTabId: tab.id }));
+
+    // Save tabs for current project
+    if (currentProject) {
+      const newTabs = [...openTabs, tab];
+      saveTabs(
+        currentProject.id,
+        newTabs.map((t) => ({
+          id: t.id,
+          fileId: t.fileId,
+          fileName: t.fileName,
+          language: t.language,
+        }))
+      );
+      saveActiveTabId(currentProject.id, tab.id);
+    }
   },
 
   closeTab: (tabId) => {
+    const { currentProject } = get();
+    
     set((state) => {
       const tabs = state.openTabs.filter((t) => t.id !== tabId);
       const active = state.activeTabId === tabId ? (tabs.length ? tabs[tabs.length - 1].id : null) : state.activeTabId;
       return { openTabs: tabs, activeTabId: active };
     });
+
+    // Save tabs for current project
+    if (currentProject) {
+      const { openTabs, activeTabId } = get();
+      saveTabs(
+        currentProject.id,
+        openTabs.map((t) => ({
+          id: t.id,
+          fileId: t.fileId,
+          fileName: t.fileName,
+          language: t.language,
+        }))
+      );
+      saveActiveTabId(currentProject.id, activeTabId);
+    }
   },
 
-  setActiveTab: (tabId) => set({ activeTabId: tabId }),
+  setActiveTab: (tabId) => {
+    const { currentProject } = get();
+    set({ activeTabId: tabId });
+    
+    if (currentProject) {
+      saveActiveTabId(currentProject.id, tabId);
+    }
+  },
 
   updateFileContent: (tabId, content) => {
     set((state) => ({
       openTabs: state.openTabs.map((t) => (t.id === tabId ? { ...t, content, isDirty: true } : t)),
     }));
+
+    // Debounced auto-save (1 second after last keystroke)
+    if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(() => {
+      get().syncTabsToProject();
+    }, 1000);
   },
 
   addConsoleMessage: (type, message) => {
@@ -429,7 +540,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       return;
     }
 
-    // Kill previous stream + watchdog (FIX for frequent builds)
+    // Kill previous stream + watchdog
     unsubscribeCurrentBuild?.();
     unsubscribeCurrentBuild = null;
     clearBuildWatchdog();
@@ -472,15 +583,13 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         language: language as "c" | "cpp",
       });
 
-      // Track current build as "active" so stale events can't mess with state
       activeBuildId = response.buildId;
 
       set({ lastBuildId: response.buildId });
       addBuildLog("status", `Build ID: ${response.buildId}`);
 
-      // Watchdog: if we never receive any events (SSE stall), unlock UI
+      // Watchdog: if we never receive any events, unlock UI
       startBuildWatchdog(() => {
-        // Only fail if this build is still the active one
         if (activeBuildId !== response.buildId) return;
 
         unsubscribeCurrentBuild?.();
@@ -494,129 +603,106 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       unsubscribeCurrentBuild = subscribeToBuildEvents(
         response.buildId,
         (event) => {
-          // Ignore any event from older builds
           if (activeBuildId !== response.buildId) return;
 
-          // Any event means stream is alive -> refresh watchdog
+          // Refresh watchdog
           startBuildWatchdog(() => {
             if (activeBuildId !== response.buildId) return;
-
             unsubscribeCurrentBuild?.();
             unsubscribeCurrentBuild = null;
-
-            set({ isBuilding: false, buildPhase: "error", buildError: "Build timed out (stalled)" });
-            get().addBuildLog("stderr", "Build timed out (stalled)");
-            get().addConsoleMessage("error", "Build timed out (stalled)");
+            set({ isBuilding: false, buildPhase: "error", buildError: "Build stalled (no events for 20s)" });
+            get().addBuildLog("stderr", "Build stalled");
+            get().addConsoleMessage("error", "Build stalled");
           }, 20_000);
 
-          const { addBuildLog, addConsoleMessage } = get();
+          const phase = normalizePhase(event.phase);
+          set({ buildPhase: phase });
 
-          if (event.type === "status") {
-            const phase = normalizePhase(event.phase ?? event.message);
-            set({ buildPhase: phase });
-            if (event.phase) addBuildLog("status", event.phase);
-            else if (event.message) addBuildLog("status", event.message);
-            return;
+          if (event.message) {
+            const isErr = phase === "error";
+            get().addBuildLog(isErr ? "stderr" : "stdout", event.message);
+            get().addConsoleMessage(isErr ? "error" : "info", event.message);
           }
 
-          if (event.type === "log" && event.message) {
-            const logType = event.stream === "stderr" ? "stderr" : "stdout";
-            addBuildLog(logType, event.message);
-            return;
-          }
-
-          if (event.type === "error") {
+          if (phase === "success") {
             clearBuildWatchdog();
             unsubscribeCurrentBuild?.();
             unsubscribeCurrentBuild = null;
 
-            set({
-              isBuilding: false,
-              buildPhase: "error",
-              buildError: event.message || "Unknown error",
-            });
-            addBuildLog("stderr", event.message || "Build error");
-            addConsoleMessage("error", event.message || "Build error");
-            return;
-          }
-
-          if (event.type === "done") {
+            const previewUrl = getPreviewUrl(response.buildId);
+            set({ isBuilding: false, lastPreviewUrl: previewUrl, pendingHotReload: runAfterBuild });
+            get().addBuildLog("status", "Build successful!");
+            get().addConsoleMessage("success", `Build complete. Preview: ${previewUrl}`);
+          } else if (phase === "error") {
             clearBuildWatchdog();
             unsubscribeCurrentBuild?.();
             unsubscribeCurrentBuild = null;
 
-            if (event.success) {
-              const previewUrl = getPreviewUrl(response.buildId);
-              set({
-                isBuilding: false,
-                buildPhase: "success",
-                lastPreviewUrl: previewUrl,
-                pendingHotReload: runAfterBuild,
-              });
-              addBuildLog("status", "Build completed successfully!");
-              addConsoleMessage("success", "Build completed successfully!");
-            } else {
-              set({
-                isBuilding: false,
-                buildPhase: "error",
-                buildError: event.message || "Build failed",
-              });
-              addBuildLog("stderr", event.message || "Build failed");
-              addConsoleMessage("error", event.message || "Build failed");
-            }
+            set({ isBuilding: false, buildError: event.message || "Build failed" });
+            get().addBuildLog("stderr", event.message || "Build failed");
+            get().addConsoleMessage("error", event.message || "Build failed");
           }
         },
-        (error) => {
-          // Ignore errors for stale builds
+        (err) => {
           if (activeBuildId !== response.buildId) return;
-
           clearBuildWatchdog();
-          unsubscribeCurrentBuild?.();
           unsubscribeCurrentBuild = null;
 
-          set({ isBuilding: false, buildPhase: "error", buildError: error.message });
-          get().addConsoleMessage("error", `Build stream error: ${error.message}`);
-          get().addBuildLog("stderr", `Build stream error: ${error.message}`);
+          set({ isBuilding: false, buildPhase: "error", buildError: err.message });
+          get().addBuildLog("stderr", `SSE error: ${err.message}`);
+          get().addConsoleMessage("error", `Build stream error: ${err.message}`);
         },
       );
-    } catch (err) {
+    } catch (err: unknown) {
       clearBuildWatchdog();
-      unsubscribeCurrentBuild?.();
-      unsubscribeCurrentBuild = null;
-
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      set({ isBuilding: false, buildPhase: "error", buildError: msg });
-      get().addBuildLog("stderr", msg);
-      get().addConsoleMessage("error", `Build failed: ${msg}`);
+      const message = err instanceof Error ? err.message : String(err);
+      set({ isBuilding: false, buildPhase: "error", buildError: message });
+      addBuildLog("stderr", message);
+      addConsoleMessage("error", message);
     }
   },
 
-  addCollaborator: (collaborator) => set((state) => ({ collaborators: [...state.collaborators, collaborator] })),
+  addCollaborator: (collaborator) => {
+    set((state) => ({ collaborators: [...state.collaborators, collaborator] }));
+  },
 
-  removeCollaborator: (id) => set((state) => ({ collaborators: state.collaborators.filter((c) => c.id !== id) })),
+  removeCollaborator: (id) => {
+    set((state) => ({ collaborators: state.collaborators.filter((c) => c.id !== id) }));
+  },
 
-  updateCollaboratorCursor: (id, cursor) =>
+  updateCollaboratorCursor: (id, cursor) => {
     set((state) => ({
       collaborators: state.collaborators.map((c) => (c.id === id ? { ...c, cursor } : c)),
-    })),
-
-  // ============ File Operations ============
+    }));
+  },
 
   renameFile: (id, newName) => {
     const { currentProject, openTabs } = get();
     if (!currentProject) return;
 
-    const renameInTree = (files: ProjectFile[]): ProjectFile[] =>
-      files.map((file) => {
-        if (file.id === id) return { ...file, name: newName };
-        if (file.children) return { ...file, children: renameInTree(file.children) };
-        return file;
+    const rename = (files: ProjectFile[]): ProjectFile[] =>
+      files.map((f) => {
+        if (f.id === id) {
+          const ext = newName.split(".").pop() || "";
+          const lang = ext === "c" || ext === "h" ? "c" : ext === "cpp" || ext === "cc" || ext === "hpp" ? "cpp" : f.language;
+          return { ...f, name: newName, language: lang };
+        }
+        if (f.children) return { ...f, children: rename(f.children) };
+        return f;
       });
 
-    const updatedFiles = renameInTree(currentProject.files);
+    const updatedFiles = rename(currentProject.files);
     const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
 
-    const updatedTabs = openTabs.map((tab) => (tab.fileId === id ? { ...tab, fileName: newName } : tab));
+    // Update tab names
+    const updatedTabs = openTabs.map((t) => {
+      if (t.fileId === id) {
+        const ext = newName.split(".").pop() || "";
+        const lang = ext === "c" || ext === "h" ? "c" : ext === "cpp" || ext === "cc" || ext === "hpp" ? "cpp" : t.language;
+        return { ...t, fileName: newName, language: lang };
+      }
+      return t;
+    });
 
     set((state) => ({
       currentProject: updatedProject,
@@ -629,63 +715,52 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject } = get();
     if (!currentProject) return;
 
-    const removeFromTree = (
-      files: ProjectFile[],
-      ids: string[],
-    ): { remaining: ProjectFile[]; removed: ProjectFile[] } => {
+    const removeFiles = (files: ProjectFile[], ids: string[]): [ProjectFile[], ProjectFile[]] => {
       const removed: ProjectFile[] = [];
-      const remaining = files
-        .filter((file) => {
-          if (ids.includes(file.id)) {
-            removed.push(file);
-            return false;
+      const remaining = files.filter((f) => {
+        if (ids.includes(f.id)) {
+          removed.push(f);
+          return false;
+        }
+        return true;
+      });
+
+      return [
+        remaining.map((f) => {
+          if (f.children) {
+            const [childRemaining, childRemoved] = removeFiles(f.children, ids);
+            removed.push(...childRemoved);
+            return { ...f, children: childRemaining };
           }
-          return true;
-        })
-        .map((file) => {
-          if (!file.children) return file;
-          const res = removeFromTree(file.children, ids);
-          removed.push(...res.removed);
-          return { ...file, children: res.remaining };
-        });
-      return { remaining, removed };
+          return f;
+        }),
+        removed,
+      ];
     };
 
-    const insertIntoTree = (
-      files: ProjectFile[],
-      targetParentId: string | null,
-      insertIndex: number,
-      nodesToInsert: ProjectFile[],
-    ): ProjectFile[] => {
-      if (targetParentId === null) {
+    const insertFiles = (files: ProjectFile[], target: string | null, idx: number, toInsert: ProjectFile[]): ProjectFile[] => {
+      if (target === null) {
         const result = [...files];
-        result.splice(
-          Math.min(insertIndex, result.length),
-          0,
-          ...nodesToInsert.map((n) => ({ ...n, parentId: undefined })),
-        );
+        result.splice(idx, 0, ...toInsert);
         return result;
       }
 
-      return files.map((file) => {
-        if (file.id === targetParentId && file.children) {
-          const children = [...file.children];
-          children.splice(
-            Math.min(insertIndex, children.length),
-            0,
-            ...nodesToInsert.map((n) => ({ ...n, parentId: targetParentId })),
-          );
-          return { ...file, children };
+      return files.map((f) => {
+        if (f.id === target && f.isFolder) {
+          const children = f.children ? [...f.children] : [];
+          children.splice(idx, 0, ...toInsert);
+          return { ...f, children };
         }
-        if (file.children)
-          return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex, nodesToInsert) };
-        return file;
+        if (f.children) {
+          return { ...f, children: insertFiles(f.children, target, idx, toInsert) };
+        }
+        return f;
       });
     };
 
-    const { remaining, removed } = removeFromTree(currentProject.files, dragIds);
-    const updatedFiles = insertIntoTree(remaining, parentId, index, removed);
-    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+    const [remaining, removed] = removeFiles(currentProject.files, dragIds);
+    const updated = insertFiles(remaining, parentId, index, removed);
+    const updatedProject = { ...currentProject, files: updated, updatedAt: new Date() };
 
     set((state) => ({
       currentProject: updatedProject,
@@ -698,39 +773,36 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     if (!currentProject) return null;
 
     const newFile: ProjectFile = {
-      id: nowId("file"),
+      id: nowId(type),
       name: type === "folder" ? "New Folder" : "untitled.c",
       content: type === "folder" ? "" : "// New file\n",
-      language: type === "folder" ? "folder" : "c",
+      language: type === "folder" ? "" : "c",
       isFolder: type === "folder",
       children: type === "folder" ? [] : undefined,
-      parentId: parentId ?? undefined,
     };
 
-    const insertIntoTree = (
-      files: ProjectFile[],
-      targetParentId: string | null,
-      insertIndex: number,
-    ): ProjectFile[] => {
-      if (targetParentId === null) {
+    const insertFile = (files: ProjectFile[], target: string | null, idx: number): ProjectFile[] => {
+      if (target === null) {
         const result = [...files];
-        result.splice(Math.min(insertIndex, result.length), 0, newFile);
+        result.splice(idx, 0, newFile);
         return result;
       }
 
-      return files.map((file) => {
-        if (file.id === targetParentId && file.children) {
-          const children = [...file.children];
-          children.splice(Math.min(insertIndex, children.length), 0, newFile);
-          return { ...file, children };
+      return files.map((f) => {
+        if (f.id === target && f.isFolder) {
+          const children = f.children ? [...f.children] : [];
+          children.splice(idx, 0, newFile);
+          return { ...f, children };
         }
-        if (file.children) return { ...file, children: insertIntoTree(file.children, targetParentId, insertIndex) };
-        return file;
+        if (f.children) {
+          return { ...f, children: insertFile(f.children, target, idx) };
+        }
+        return f;
       });
     };
 
-    const updatedFiles = insertIntoTree(currentProject.files, parentId, index);
-    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+    const updated = insertFile(currentProject.files, parentId, index);
+    const updatedProject = { ...currentProject, files: updated, updatedAt: new Date() };
 
     set((state) => ({
       currentProject: updatedProject,
@@ -744,41 +816,43 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject, openTabs } = get();
     if (!currentProject) return;
 
-    const collectAllIds = (files: ProjectFile[], targetIds: string[]): string[] => {
+    const collectIds = (files: ProjectFile[], targetIds: string[]): string[] => {
       const all: string[] = [];
-      const walk = (f: ProjectFile) => {
+      for (const f of files) {
         if (targetIds.includes(f.id)) {
           all.push(f.id);
-          f.children?.forEach(walk);
-        } else {
-          f.children?.forEach(walk);
+          if (f.children) {
+            all.push(...collectIds(f.children, f.children.map((c) => c.id)));
+          }
+        } else if (f.children) {
+          all.push(...collectIds(f.children, targetIds));
         }
-      };
-      files.forEach(walk);
-      return [...new Set([...targetIds, ...all])];
+      }
+      return all;
     };
 
-    const allIdsToDelete = collectAllIds(currentProject.files, ids);
+    const allIds = collectIds(currentProject.files, ids);
 
-    const removeFromTree = (files: ProjectFile[]): ProjectFile[] =>
+    const removeFiles = (files: ProjectFile[]): ProjectFile[] =>
       files
-        .filter((f) => !allIdsToDelete.includes(f.id))
-        .map((f) => (f.children ? { ...f, children: removeFromTree(f.children) } : f));
+        .filter((f) => !allIds.includes(f.id))
+        .map((f) => (f.children ? { ...f, children: removeFiles(f.children) } : f));
 
-    const updatedFiles = removeFromTree(currentProject.files);
-    const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+    const updated = removeFiles(currentProject.files);
+    const updatedProject = { ...currentProject, files: updated, updatedAt: new Date() };
 
-    const remainingTabs = openTabs.filter((t) => !allIdsToDelete.includes(t.fileId));
-    const newActiveTabId = remainingTabs.length ? remainingTabs[remainingTabs.length - 1].id : null;
+    // Close tabs for deleted files
+    const remainingTabs = openTabs.filter((t) => !allIds.includes(t.fileId));
+    const newActiveId =
+      remainingTabs.length > 0
+        ? allIds.includes(get().activeTabId || "") ? remainingTabs[remainingTabs.length - 1].id : get().activeTabId
+        : null;
 
     set((state) => ({
       currentProject: updatedProject,
       projects: state.projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
       openTabs: remainingTabs,
-      activeTabId:
-        state.activeTabId && allIdsToDelete.includes(openTabs.find((t) => t.id === state.activeTabId)?.fileId || "")
-          ? newActiveTabId
-          : state.activeTabId,
+      activeTabId: newActiveId,
     }));
   },
 }));

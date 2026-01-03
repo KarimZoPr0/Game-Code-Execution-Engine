@@ -2,18 +2,11 @@ import React, { useState } from 'react';
 import { 
   ChevronDown, 
   Hammer, 
-  Plus, 
-  Settings, 
   FolderPlus,
   Loader2,
   Play,
-  Cloud,
-  CloudOff,
-  RefreshCw
 } from 'lucide-react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
-import { useCloudSync, SyncStatus } from '@/hooks/useCloudSync';
-import { useAuth } from '@/contexts/AuthContext';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,11 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ProfileMenu from '@/components/profile/ProfileMenu';
 
-interface ToolbarProps {
-  onAddPanel: (type: string) => void;
-}
-
-const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
+const Toolbar: React.FC = () => {
   const { 
     currentProject, 
     projects, 
@@ -46,9 +35,6 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
     buildPhase,
     submitBuild,
   } = usePlaygroundStore();
-  
-  const { user } = useAuth();
-  const { syncStatus } = useCloudSync();
   
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -81,33 +67,33 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
 
   return (
     <>
-      <div className="h-12 bg-panel-header border-b border-panel-border flex items-center justify-between px-4">
+      <div className="h-12 bg-[#161b22] border-b border-[#30363d] flex items-center justify-between px-4">
         {/* Left section */}
         <div className="flex items-center gap-3">
           {/* Logo */}
           <div className="flex items-center gap-2">
             <img src="/favicon.png" alt="CodeForge" className="w-8 h-8 rounded-md" />
-            <span className="font-bold text-lg text-foreground">CodeForge</span>
+            <span className="font-bold text-lg text-[#c9d1d9]">CodeForge</span>
           </div>
 
           {/* Project selector */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-muted text-sm">
-              <span className="text-foreground">{currentProject?.name || 'Select Project'}</span>
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+            <DropdownMenuTrigger className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-[#1c2128] text-sm">
+              <span className="text-[#c9d1d9]">{currentProject?.name || 'Select Project'}</span>
+              <ChevronDown className="w-4 h-4 text-[#8b949e]" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuContent align="start" className="w-56 bg-[#161b22] border-[#30363d]">
               {projects.map((project) => (
                 <DropdownMenuItem
                   key={project.id}
                   onClick={() => setCurrentProject(project)}
-                  className={project.id === currentProject?.id ? 'bg-primary/20 text-primary' : ''}
+                  className={project.id === currentProject?.id ? 'bg-[#58a6ff]/20 text-[#58a6ff]' : 'text-[#c9d1d9]'}
                 >
                   {project.name}
                 </DropdownMenuItem>
               ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setShowNewProject(true)}>
+              <DropdownMenuSeparator className="bg-[#30363d]" />
+              <DropdownMenuItem onClick={() => setShowNewProject(true)} className="text-[#c9d1d9]">
                 <FolderPlus className="w-4 h-4 mr-2" />
                 New Project
               </DropdownMenuItem>
@@ -123,7 +109,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
                 variant="default" 
                 size="sm" 
                 disabled={isBuilding}
-                className="gap-2"
+                className="gap-2 bg-[#238636] hover:bg-[#2ea043] text-white"
               >
                 {isBuilding ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -134,12 +120,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
                 <ChevronDown className="w-3 h-3 ml-1" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="center">
-              <DropdownMenuItem onClick={handleBuild} disabled={isBuilding}>
+            <DropdownMenuContent align="center" className="bg-[#161b22] border-[#30363d]">
+              <DropdownMenuItem onClick={handleBuild} disabled={isBuilding} className="text-[#c9d1d9]">
                 <Hammer className="w-4 h-4 mr-2" />
                 Build
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleBuildAndRun} disabled={isBuilding}>
+              <DropdownMenuItem onClick={handleBuildAndRun} disabled={isBuilding} className="text-[#c9d1d9]">
                 <Play className="w-4 h-4 mr-2" />
                 Build & Run
               </DropdownMenuItem>
@@ -149,66 +135,16 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
 
         {/* Right section */}
         <div className="flex items-center gap-3">
-          {/* Add panel */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2">
-                <Plus className="w-4 h-4" />
-                Add Panel
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onAddPanel('editor')}>
-                Text Editor
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAddPanel('preview')}>
-                Game Preview
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAddPanel('console')}>
-                Console
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAddPanel('filetree')}>
-                File Tree
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAddPanel('excalidraw')}>
-                Drawing Board
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Cloud sync status */}
-          {user && (
-            <div className="flex items-center gap-1 text-xs text-muted-foreground" title={`Sync status: ${syncStatus}`}>
-              {syncStatus === 'syncing' && (
-                <RefreshCw className="w-4 h-4 animate-spin text-primary" />
-              )}
-              {syncStatus === 'synced' && (
-                <Cloud className="w-4 h-4 text-green-500" />
-              )}
-              {syncStatus === 'error' && (
-                <CloudOff className="w-4 h-4 text-destructive" />
-              )}
-              {syncStatus === 'idle' && (
-                <Cloud className="w-4 h-4" />
-              )}
-            </div>
-          )}
-
           {/* Profile / Sign In */}
           <ProfileMenu />
-
-          {/* Settings */}
-          <Button variant="ghost" size="icon">
-            <Settings className="w-4 h-4" />
-          </Button>
         </div>
       </div>
 
       {/* New Project Dialog */}
       <Dialog open={showNewProject} onOpenChange={setShowNewProject}>
-        <DialogContent>
+        <DialogContent className="bg-[#161b22] border-[#30363d]">
           <DialogHeader>
-            <DialogTitle>Create New Project</DialogTitle>
+            <DialogTitle className="text-[#c9d1d9]">Create New Project</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <Input
@@ -217,13 +153,16 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddPanel }) => {
               onChange={(e) => setNewProjectName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreateProject()}
               autoFocus
+              className="bg-[#0d1117] border-[#30363d] text-[#c9d1d9] placeholder:text-[#484f58]"
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewProject(false)}>
+            <Button variant="outline" onClick={() => setShowNewProject(false)} className="border-[#30363d] text-[#c9d1d9] hover:bg-[#1c2128]">
               Cancel
             </Button>
-            <Button onClick={handleCreateProject}>Create</Button>
+            <Button onClick={handleCreateProject} className="bg-[#238636] hover:bg-[#2ea043] text-white">
+              Create
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
