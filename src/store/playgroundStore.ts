@@ -215,11 +215,18 @@ const normalizePhase = (phase?: string): BuildPhase => {
   if (p === "init" || p === "queued" || p.includes("wait")) return "queued";
   if (p === "compile" || p === "compiling") return "compiling";
   if (p === "link" || p === "linking") return "linking";
-  if (p === "success") return "success";
-  if (p === "error" || p === "failed") return "error";
+  if (p === "success" || p === "complete" || p === "done") return "success";
+  if (p === "error" || p === "failed" || p === "failure") return "error";
   if (p === "idle") return "idle";
 
   return "building";
+};
+
+/** Check if a message indicates build success */
+const isSuccessMessage = (message?: string): boolean => {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return m === "success" || m.includes("build successful") || m.includes("build complete");
 };
 
 // Helper to find file in tree
@@ -616,6 +623,21 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           }, 20_000);
 
           const phase = normalizePhase(event.phase);
+          const messageIndicatesSuccess = isSuccessMessage(event.message);
+          
+          // Check for done event type (SSE stream completion)
+          if (event.type === "done" || phase === "success" || messageIndicatesSuccess) {
+            clearBuildWatchdog();
+            unsubscribeCurrentBuild?.();
+            unsubscribeCurrentBuild = null;
+
+            const previewUrl = getPreviewUrl(response.buildId);
+            set({ isBuilding: false, lastPreviewUrl: previewUrl, buildPhase: "success", pendingHotReload: runAfterBuild });
+            get().addBuildLog("status", "Build successful!");
+            get().addConsoleMessage("success", `Build complete. Preview: ${previewUrl}`);
+            return;
+          }
+          
           set({ buildPhase: phase });
 
           if (event.message) {
@@ -624,16 +646,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
             get().addConsoleMessage(isErr ? "error" : "info", event.message);
           }
 
-          if (phase === "success") {
-            clearBuildWatchdog();
-            unsubscribeCurrentBuild?.();
-            unsubscribeCurrentBuild = null;
-
-            const previewUrl = getPreviewUrl(response.buildId);
-            set({ isBuilding: false, lastPreviewUrl: previewUrl, pendingHotReload: runAfterBuild });
-            get().addBuildLog("status", "Build successful!");
-            get().addConsoleMessage("success", `Build complete. Preview: ${previewUrl}`);
-          } else if (phase === "error") {
+          if (phase === "error") {
             clearBuildWatchdog();
             unsubscribeCurrentBuild?.();
             unsubscribeCurrentBuild = null;
