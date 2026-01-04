@@ -286,7 +286,7 @@ export function subscribeToBuild(
       unsubSSE?.();
       unsubPoll = pollBuildStatus(buildId, onEvent, onError);
     }
-  }, 10);
+  }, 1000);
 
   unsubSSE = subscribeToBuildEvents(
     buildId,
