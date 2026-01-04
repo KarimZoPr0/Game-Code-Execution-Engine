@@ -201,7 +201,7 @@ export function pollBuildStatus(
   buildId: string,
   onEvent: (event: BuildEvent) => void,
   onError: (error: Error) => void,
-  interval = 2000
+  interval = 2000,
 ): () => void {
   let stopped = false;
   let lastPhase = "";
@@ -286,7 +286,7 @@ export function subscribeToBuild(
       unsubSSE?.();
       unsubPoll = pollBuildStatus(buildId, onEvent, onError);
     }
-  }, 5000);
+  }, 1000);
 
   unsubSSE = subscribeToBuildEvents(
     buildId,
@@ -302,7 +302,7 @@ export function subscribeToBuild(
         usePolling = true;
         unsubPoll = pollBuildStatus(buildId, onEvent, onError);
       }
-    }
+    },
   );
 
   return () => {
