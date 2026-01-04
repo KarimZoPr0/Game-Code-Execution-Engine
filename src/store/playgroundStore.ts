@@ -9,7 +9,7 @@ import {
   BuildPhase,
   BuildLogEntry,
 } from "@/types/playground";
-import { submitBuild as apiSubmitBuild, subscribeToBuildEvents, getPreviewUrl } from "@/lib/api";
+import { submitBuild as apiSubmitBuild, subscribeToBuild, getPreviewUrl } from "@/lib/api";
 import { saveTabs, saveActiveTabId, getStoredTabs, getActiveTabId } from "@/lib/storage/localStorage";
 
 const defaultMainC = `#include <SDL2/SDL.h>
@@ -595,7 +595,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       set({ lastBuildId: response.buildId });
       addBuildLog("status", `Build ID: ${response.buildId}`);
 
-      // Watchdog: if we never receive any events, unlock UI
+      // Watchdog: if we never receive any events, unlock UI (increased to 30s for polling fallback)
       startBuildWatchdog(() => {
         if (activeBuildId !== response.buildId) return;
 
@@ -605,9 +605,10 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         set({ isBuilding: false, buildPhase: "error", buildError: "Build timed out (no events received)" });
         get().addBuildLog("stderr", "Build timed out (no events received)");
         get().addConsoleMessage("error", "Build timed out (no events received)");
-      }, 20_000);
+      }, 30_000);
 
-      unsubscribeCurrentBuild = subscribeToBuildEvents(
+      // Use hybrid SSE + polling subscriber for Cloudflare compatibility
+      unsubscribeCurrentBuild = subscribeToBuild(
         response.buildId,
         (event) => {
           if (activeBuildId !== response.buildId) return;
@@ -617,10 +618,10 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
             if (activeBuildId !== response.buildId) return;
             unsubscribeCurrentBuild?.();
             unsubscribeCurrentBuild = null;
-            set({ isBuilding: false, buildPhase: "error", buildError: "Build stalled (no events for 20s)" });
+            set({ isBuilding: false, buildPhase: "error", buildError: "Build stalled (no events for 30s)" });
             get().addBuildLog("stderr", "Build stalled");
             get().addConsoleMessage("error", "Build stalled");
-          }, 20_000);
+          }, 30_000);
 
           const phase = normalizePhase(event.phase);
           const messageIndicatesSuccess = isSuccessMessage(event.message);
