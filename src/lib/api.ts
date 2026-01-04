@@ -43,7 +43,6 @@ export async function submitBuild(request: BuildRequest): Promise<BuildResponse>
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "true",
     },
     body: JSON.stringify(request),
   });
@@ -77,7 +76,6 @@ export function subscribeToBuildEvents(
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_DELAY = 2000;
 
-  // NEW: track whether we ever got a terminal event
   let gotTerminalEvent = false;
 
   const scheduleReconnect = () => {
@@ -102,7 +100,6 @@ export function subscribeToBuildEvents(
       const response = await fetch(`${API_BASE_URL}/api/build/${buildId}/events`, {
         headers: {
           Accept: "text/event-stream",
-          "ngrok-skip-browser-warning": "true",
         },
         credentials: "include",
         signal: abortController.signal,
@@ -125,13 +122,10 @@ export function subscribeToBuildEvents(
         const { done, value } = await reader.read();
 
         if (done) {
-          // IMPORTANT FIX:
-          // Stream ended. If we didn't receive a terminal event, treat this as an unexpected disconnect
-          // and reconnect (or ultimately error out).
           if (!gotTerminalEvent && !closed) {
             scheduleReconnect();
           }
-          return; // exit connect()
+          return;
         }
 
         buffer += decoder.decode(value, { stream: true });
@@ -144,14 +138,12 @@ export function subscribeToBuildEvents(
               const data = JSON.parse(line.slice(6)) as BuildEvent;
               onEvent(data);
 
-              // Terminal events must end the stream from the UI perspective
               if (data.type === "done" || data.type === "error") {
                 gotTerminalEvent = true;
                 closed = true;
                 return;
               }
 
-              // Optional: treat any status as "connection is alive"
               if (data.type === "status") {
                 reconnectAttempts = 0;
               }
@@ -167,18 +159,15 @@ export function subscribeToBuildEvents(
       if (closed) return;
 
       if (error instanceof Error && error.name === "AbortError") {
-        return; // aborted intentionally
+        return;
       }
 
-      // Reconnect on errors, up to max attempts
       scheduleReconnect();
     }
   };
 
-  // Start the connection
   connect();
 
-  // Return cleanup function
   return () => {
     closed = true;
 
@@ -193,13 +182,9 @@ export function subscribeToBuildEvents(
   };
 }
 
-// Get build result
+// Get build result via polling
 export async function getBuildResult(buildId: string): Promise<BuildResult> {
-  const response = await fetch(`${API_BASE_URL}/api/build/${buildId}/result`, {
-    headers: {
-      "ngrok-skip-browser-warning": "true",
-    },
-  });
+  const response = await fetch(`${API_BASE_URL}/api/build/${buildId}/result`);
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -211,10 +196,125 @@ export async function getBuildResult(buildId: string): Promise<BuildResult> {
   return response.json();
 }
 
+// Poll build status as a fallback when SSE doesn't work
+export function pollBuildStatus(
+  buildId: string,
+  onEvent: (event: BuildEvent) => void,
+  onError: (error: Error) => void,
+  interval = 2000
+): () => void {
+  let stopped = false;
+  let lastPhase = "";
+  let pollCount = 0;
+  const MAX_POLLS = 150; // 5 minutes max with 2s interval
+
+  const poll = async () => {
+    if (stopped) return;
+    pollCount++;
+
+    if (pollCount > MAX_POLLS) {
+      onError(new Error("Build polling timed out"));
+      return;
+    }
+
+    try {
+      const result = await getBuildResult(buildId);
+      console.log("[Poll] Build result:", result);
+
+      // Emit status updates based on result
+      if (result.status && result.status !== lastPhase) {
+        lastPhase = result.status;
+        onEvent({ buildId, type: "status", phase: result.status, message: result.message });
+      }
+
+      // Check for completion
+      if (result.ok && result.previewUrl) {
+        onEvent({ buildId, type: "done", success: true, previewUrl: result.previewUrl });
+        stopped = true;
+        return;
+      }
+
+      // Also check if status indicates success
+      if (result.status === "success" || result.status === "complete" || result.status === "done") {
+        onEvent({ buildId, type: "done", success: true, previewUrl: result.previewUrl });
+        stopped = true;
+        return;
+      }
+
+      if (result.status === "error" || result.status === "failed") {
+        onEvent({ buildId, type: "error", message: result.error || "Build failed" });
+        stopped = true;
+        return;
+      }
+
+      // Continue polling
+      if (!stopped) {
+        setTimeout(poll, interval);
+      }
+    } catch (err) {
+      console.log("[Poll] Error fetching result, retrying...", err);
+      if (!stopped) {
+        setTimeout(poll, interval);
+      }
+    }
+  };
+
+  console.log("[Poll] Starting build status polling for", buildId);
+  poll();
+
+  return () => {
+    stopped = true;
+  };
+}
+
+// Hybrid subscriber: tries SSE first, falls back to polling
+export function subscribeToBuild(
+  buildId: string,
+  onEvent: (event: BuildEvent) => void,
+  onError: (error: Error) => void,
+): () => void {
+  let usePolling = false;
+  let unsubSSE: (() => void) | null = null;
+  let unsubPoll: (() => void) | null = null;
+  let gotFirstEvent = false;
+
+  // Start SSE with a shorter initial timeout - switch to polling if no events
+  const sseTimeout = setTimeout(() => {
+    if (!gotFirstEvent && !usePolling) {
+      console.log("[SSE] No events received in 5s, switching to polling...");
+      usePolling = true;
+      unsubSSE?.();
+      unsubPoll = pollBuildStatus(buildId, onEvent, onError);
+    }
+  }, 5000);
+
+  unsubSSE = subscribeToBuildEvents(
+    buildId,
+    (event) => {
+      gotFirstEvent = true;
+      clearTimeout(sseTimeout);
+      onEvent(event);
+    },
+    (err) => {
+      clearTimeout(sseTimeout);
+      if (!usePolling) {
+        console.log("[SSE] SSE failed, switching to polling...", err.message);
+        usePolling = true;
+        unsubPoll = pollBuildStatus(buildId, onEvent, onError);
+      }
+    }
+  );
+
+  return () => {
+    clearTimeout(sseTimeout);
+    unsubSSE?.();
+    unsubPoll?.();
+  };
+}
+
 // Get preview URL for a build
 export function getPreviewUrl(buildId: string): string {
-  // Add ngrok-skip-browser-warning to bypass ngrok's interstitial page
-  return `${API_BASE_URL}/preview/${buildId}?ngrok-skip-browser-warning=1`;
+  return `${API_BASE_URL}/preview/${buildId}`;
 }
 
 // Get API base URL (useful for iframe src)
