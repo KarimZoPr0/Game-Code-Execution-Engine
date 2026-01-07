@@ -11,6 +11,10 @@ import {
 } from "@/types/playground";
 import { submitBuild as apiSubmitBuild, subscribeToBuild, getPreviewUrl } from "@/lib/api";
 import { saveTabs, saveActiveTabId, getStoredTabs, getActiveTabId } from "@/lib/storage/localStorage";
+import { deleteProject as deleteFromIndexedDB, deleteExcalidrawDrawing, saveProject as saveToIndexedDB, saveExcalidrawDrawing } from "@/lib/storage/indexedDB";
+import { deleteCloudProject, syncProjectToCloud, syncExcalidrawToCloud } from "@/lib/storage/cloudSync";
+import { supabase } from "@/integrations/supabase/client";
+import { regenerateFileIds } from "@/lib/storage/projectImport";
 
 const defaultMainC = `#include <SDL2/SDL.h>
 #include <emscripten.h>
@@ -192,6 +196,10 @@ interface PlaygroundState {
   // Tab persistence helpers
   loadTabsForProject: (projectId: string, files: ProjectFile[]) => void;
   saveCurrentTabs: () => void;
+
+  // Project management
+  deleteProject: (projectId: string) => Promise<void>;
+  importProject: (name: string, files: ProjectFile[], excalidrawData?: unknown) => Promise<Project>;
 }
 
 /** Flatten file tree into compiler payload */
@@ -868,5 +876,114 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       openTabs: remainingTabs,
       activeTabId: newActiveId,
     }));
+  },
+
+  deleteProject: async (projectId) => {
+    const { projects, currentProject, saveCurrentTabs } = get();
+    
+    // Prevent deleting the last project
+    if (projects.length <= 1) {
+      console.warn('Cannot delete the last project');
+      return;
+    }
+
+    // Save current tabs before switching
+    saveCurrentTabs();
+
+    // Remove from local state
+    const remainingProjects = projects.filter((p) => p.id !== projectId);
+    
+    // If deleting current project, switch to another
+    const needsSwitch = currentProject?.id === projectId;
+    const newCurrentProject = needsSwitch ? remainingProjects[0] : currentProject;
+
+    set({
+      projects: remainingProjects,
+      currentProject: newCurrentProject,
+      openTabs: needsSwitch ? [] : get().openTabs,
+      activeTabId: needsSwitch ? null : get().activeTabId,
+    });
+
+    // Load tabs for new project if switched
+    if (needsSwitch && newCurrentProject) {
+      get().loadTabsForProject(newCurrentProject.id, newCurrentProject.files);
+    }
+
+    // Delete from IndexedDB
+    try {
+      await deleteFromIndexedDB(projectId);
+      await deleteExcalidrawDrawing(projectId);
+    } catch (e) {
+      console.error('Error deleting from IndexedDB:', e);
+    }
+
+    // Delete from cloud if authenticated
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await deleteCloudProject(user.id, projectId);
+      }
+    } catch (e) {
+      console.error('Error deleting from cloud:', e);
+    }
+  },
+
+  importProject: async (name, files, excalidrawData) => {
+    const { projects, saveCurrentTabs } = get();
+
+    // Save current tabs before switching
+    saveCurrentTabs();
+
+    // Generate unique name if duplicate
+    let finalName = name;
+    let counter = 1;
+    while (projects.some((p) => p.name === finalName)) {
+      counter++;
+      finalName = `${name} (${counter})`;
+    }
+
+    // Regenerate file IDs to avoid conflicts
+    const newFiles = regenerateFileIds(files);
+
+    const projectId = `project-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const newProject: Project = {
+      id: projectId,
+      name: finalName,
+      files: newFiles,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    set((state) => ({
+      projects: [...state.projects, newProject],
+      currentProject: newProject,
+      openTabs: [],
+      activeTabId: null,
+    }));
+
+    // Save to IndexedDB
+    try {
+      await saveToIndexedDB(newProject);
+      if (excalidrawData) {
+        await saveExcalidrawDrawing(projectId, excalidrawData);
+      }
+    } catch (e) {
+      console.error('Error saving to IndexedDB:', e);
+    }
+
+    // Sync to cloud if authenticated
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await syncProjectToCloud(user.id, newProject);
+        if (excalidrawData) {
+          await syncExcalidrawToCloud(user.id, projectId, excalidrawData);
+        }
+      }
+    } catch (e) {
+      console.error('Error syncing to cloud:', e);
+    }
+
+    return newProject;
   },
 }));

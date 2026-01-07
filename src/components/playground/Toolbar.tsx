@@ -1,11 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   ChevronDown, 
   Hammer, 
   FolderPlus,
   Loader2,
   Play,
+  Download,
+  Upload,
+  Trash2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import {
   DropdownMenu,
@@ -19,8 +23,21 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { downloadProject } from '@/lib/storage/projectExport';
+import { parseProjectFile, ProjectImportError } from '@/lib/storage/projectImport';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ProfileMenu from '@/components/profile/ProfileMenu';
@@ -30,7 +47,9 @@ const Toolbar: React.FC = () => {
     currentProject, 
     projects, 
     setCurrentProject, 
-    createProject, 
+    createProject,
+    deleteProject,
+    importProject,
     isBuilding, 
     buildPhase,
     submitBuild,
@@ -38,6 +57,10 @@ const Toolbar: React.FC = () => {
   
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCreateProject = () => {
     if (newProjectName.trim()) {
@@ -53,6 +76,56 @@ const Toolbar: React.FC = () => {
 
   const handleBuildAndRun = () => {
     submitBuild(true);
+  };
+
+  const handleDeleteProject = async () => {
+    if (!currentProject) return;
+    await deleteProject(currentProject.id);
+    setShowDeleteConfirm(false);
+    toast.success('Project deleted');
+  };
+
+  const handleExportProject = async () => {
+    if (!currentProject) return;
+    setIsExporting(true);
+    try {
+      await downloadProject(currentProject);
+      toast.success('Project exported');
+    } catch (e) {
+      console.error('Export error:', e);
+      toast.error('Failed to export project');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    try {
+      const exported = await parseProjectFile(file);
+      await importProject(exported.project.name, exported.project.files, exported.excalidrawData);
+      toast.success(`Project "${exported.project.name}" imported`);
+    } catch (err) {
+      if (err instanceof ProjectImportError) {
+        toast.error(err.message);
+      } else {
+        toast.error('Failed to import project');
+      }
+      console.error('Import error:', err);
+    } finally {
+      setIsImporting(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   const getBuildButtonText = () => {
@@ -97,6 +170,23 @@ const Toolbar: React.FC = () => {
                 <FolderPlus className="w-4 h-4 mr-2" />
                 New Project
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleImportClick} disabled={isImporting} className="text-[#c9d1d9]">
+                <Upload className="w-4 h-4 mr-2" />
+                {isImporting ? 'Importing...' : 'Import Project'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-[#30363d]" />
+              <DropdownMenuItem onClick={handleExportProject} disabled={isExporting || !currentProject} className="text-[#c9d1d9]">
+                <Download className="w-4 h-4 mr-2" />
+                {isExporting ? 'Exporting...' : 'Export Project'}
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => setShowDeleteConfirm(true)} 
+                disabled={projects.length <= 1 || !currentProject}
+                className="text-red-400 focus:text-red-400 focus:bg-red-500/10"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete Project
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -140,11 +230,23 @@ const Toolbar: React.FC = () => {
         </div>
       </div>
 
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".codeforge,.json"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
       {/* New Project Dialog */}
       <Dialog open={showNewProject} onOpenChange={setShowNewProject}>
         <DialogContent className="bg-[#161b22] border-[#30363d]">
           <DialogHeader>
             <DialogTitle className="text-[#c9d1d9]">Create New Project</DialogTitle>
+            <DialogDescription className="text-[#8b949e]">
+              Enter a name for your new project.
+            </DialogDescription>
           </DialogHeader>
           <div className="py-4">
             <Input
@@ -166,6 +268,29 @@ const Toolbar: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent className="bg-[#161b22] border-[#30363d]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-[#c9d1d9]">Delete Project</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#8b949e]">
+              Are you sure you want to delete "{currentProject?.name}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#30363d] text-[#c9d1d9] hover:bg-[#1c2128] hover:text-[#c9d1d9]">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteProject}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };
