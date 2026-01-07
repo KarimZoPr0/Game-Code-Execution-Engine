@@ -5,7 +5,11 @@ import { cn } from '@/lib/utils';
 
 type LogFilter = 'all' | 'console' | 'build';
 
-const Console: React.FC = () => {
+interface ConsoleProps {
+  isMobile?: boolean;
+}
+
+const Console: React.FC<ConsoleProps> = ({ isMobile = false }) => {
   const { consoleMessages, clearConsole, buildLogs, clearBuildLogs } = usePlaygroundStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<LogFilter>('all');
@@ -87,13 +91,14 @@ const Console: React.FC = () => {
           <Terminal className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm text-muted-foreground">Console</span>
           {/* Filter tabs */}
-          <div className="flex ml-2 text-xs">
+          <div className={cn("flex text-xs", isMobile ? "ml-1" : "ml-2")}>
             {(['all', 'console', 'build'] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
                 className={cn(
-                  'px-2 py-0.5 rounded capitalize',
+                  'rounded capitalize',
+                  isMobile ? 'px-3 py-1.5' : 'px-2 py-0.5',
                   filter === f 
                     ? 'bg-primary/20 text-primary' 
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -119,10 +124,12 @@ const Console: React.FC = () => {
           <div className="text-muted-foreground">No output</div>
         ) : (
           filteredMessages.map((msg) => (
-            <div key={msg.id} className="flex gap-2 py-0.5">
-              <span className="text-muted-foreground text-xs shrink-0">
-                {msg.timestamp.toLocaleTimeString()}
-              </span>
+            <div key={msg.id} className={cn("flex gap-2", isMobile ? "py-1" : "py-0.5")}>
+              {!isMobile && (
+                <span className="text-muted-foreground text-xs shrink-0">
+                  {msg.timestamp.toLocaleTimeString()}
+                </span>
+              )}
               <span className={cn("font-semibold shrink-0", getMessageColor(msg.type))}>
                 {getMessagePrefix(msg.type)}
               </span>

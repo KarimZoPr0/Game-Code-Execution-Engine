@@ -26,9 +26,12 @@ const convertToTreeData = (files: ProjectFile[]): TreeNode[] => {
   }));
 };
 
-// Custom Node Renderer
+// Custom Node Renderer - needs access to onFileSelect callback via context
+const FileTreeContext = React.createContext<{ onFileSelect?: () => void }>({});
+
 const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
   const { openFile, openTabs, activeTabId, ensureEditorVisible } = usePlaygroundStore();
+  const { onFileSelect } = React.useContext(FileTreeContext);
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const isActive = activeTab?.fileId === node.data.data.id;
   const isFolder = node.isInternal;
@@ -64,6 +67,8 @@ const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
       // Ensure an editor is visible first
       ensureEditorVisible();
       openFile(node.data.data);
+      // Notify parent (for mobile sheet close)
+      onFileSelect?.();
     }
   };
 
@@ -125,7 +130,11 @@ const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
   );
 };
 
-const FileTree: React.FC = () => {
+interface FileTreeProps {
+  onFileSelect?: () => void;
+}
+
+const FileTree: React.FC<FileTreeProps> = ({ onFileSelect }) => {
   const { currentProject, renameFile, moveFiles, createFile, deleteFiles, openFile, ensureEditorVisible } = usePlaygroundStore();
   const { ref, width, height } = useResizeObserver<HTMLDivElement>();
   const treeRef = useRef<TreeApi<TreeNode> | null>(null);
@@ -202,8 +211,9 @@ const FileTree: React.FC = () => {
     if (!node.isInternal) {
       ensureEditorVisible();
       openFile(node.data.data);
+      onFileSelect?.();
     }
-  }, [openFile, ensureEditorVisible]);
+  }, [openFile, ensureEditorVisible, onFileSelect]);
 
   // Search match function
   const searchMatch = useCallback((node: NodeApi<TreeNode>, term: string) => {
@@ -219,73 +229,75 @@ const FileTree: React.FC = () => {
   }
 
   return (
-    <div ref={ref} className="h-full bg-filetree-bg flex flex-col overflow-hidden">
-      {/* Project header */}
-      <div className="p-2 border-b border-panel-border shrink-0">
-        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-          {currentProject.name}
-        </span>
-      </div>
+    <FileTreeContext.Provider value={{ onFileSelect }}>
+      <div ref={ref} className="h-full bg-filetree-bg flex flex-col overflow-hidden">
+        {/* Project header */}
+        <div className="p-2 border-b border-panel-border shrink-0">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            {currentProject.name}
+          </span>
+        </div>
 
-      {/* Search input */}
-      <div className="p-2 border-b border-panel-border shrink-0">
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search files..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="h-7 pl-7 text-xs bg-panel-bg border-panel-border"
-          />
+        {/* Search input */}
+        <div className="p-2 border-b border-panel-border shrink-0">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Search files..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-7 pl-7 text-xs bg-panel-bg border-panel-border"
+            />
+          </div>
+        </div>
+        
+        {/* Tree container */}
+        <div className="flex-1 min-h-0">
+          <Tree<TreeNode>
+            ref={treeRef}
+            data={treeData}
+            openByDefault
+            width={width || 250}
+            height={(height || 400) - 80}
+            indent={16}
+            rowHeight={28}
+            overscanCount={5}
+            paddingTop={8}
+            paddingBottom={8}
+            
+            // Enable all interactions
+            disableDrag={false}
+            disableDrop={handleDisableDrop}
+            disableEdit={false}
+            disableMultiSelection={false}
+            
+            // Handlers that persist changes
+            onMove={handleMove}
+            onRename={handleRename}
+            onDelete={handleDelete}
+            onCreate={handleCreate}
+            onActivate={handleActivate}
+            
+            // Search/Filter
+            searchTerm={searchTerm}
+            searchMatch={searchMatch}
+            
+            className="focus:outline-none"
+            rowClassName="px-1"
+          >
+            {Node}
+          </Tree>
+        </div>
+
+        {/* Keyboard shortcuts hint */}
+        <div className="p-2 border-t border-panel-border text-[10px] text-muted-foreground shrink-0">
+          <span className="opacity-70">
+            Enter: rename · A: new file · Shift+A: new folder · Delete: remove
+          </span>
         </div>
       </div>
-      
-      {/* Tree container */}
-      <div className="flex-1 min-h-0">
-        <Tree<TreeNode>
-          ref={treeRef}
-          data={treeData}
-          openByDefault
-          width={width || 250}
-          height={(height || 400) - 80}
-          indent={16}
-          rowHeight={28}
-          overscanCount={5}
-          paddingTop={8}
-          paddingBottom={8}
-          
-          // Enable all interactions
-          disableDrag={false}
-          disableDrop={handleDisableDrop}
-          disableEdit={false}
-          disableMultiSelection={false}
-          
-          // Handlers that persist changes
-          onMove={handleMove}
-          onRename={handleRename}
-          onDelete={handleDelete}
-          onCreate={handleCreate}
-          onActivate={handleActivate}
-          
-          // Search/Filter
-          searchTerm={searchTerm}
-          searchMatch={searchMatch}
-          
-          className="focus:outline-none"
-          rowClassName="px-1"
-        >
-          {Node}
-        </Tree>
-      </div>
-
-      {/* Keyboard shortcuts hint */}
-      <div className="p-2 border-t border-panel-border text-[10px] text-muted-foreground shrink-0">
-        <span className="opacity-70">
-          Enter: rename · A: new file · Shift+A: new folder · Delete: remove
-        </span>
-      </div>
-    </div>
+    </FileTreeContext.Provider>
   );
 };
 

@@ -7,8 +7,10 @@ import Console from './Console';
 import GamePreview from './GamePreview';
 import ExcalidrawPanel from './ExcalidrawPanel';
 import Toolbar from './Toolbar';
+import MobilePlayground from './MobilePlayground';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import { getStoredLayout, saveLayout } from '@/lib/storage/localStorage';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 const defaultLayout: FlexLayout.IJsonModel = {
   global: {
@@ -95,6 +97,8 @@ const defaultLayout: FlexLayout.IJsonModel = {
 };
 
 const PlaygroundLayout: React.FC = () => {
+  const isMobile = useIsMobile();
+
   // Try to load saved layout, fallback to default
   const getInitialModel = () => {
     const savedLayout = getStoredLayout();
@@ -152,6 +156,11 @@ const PlaygroundLayout: React.FC = () => {
         return <div className="p-4 text-muted-foreground">Unknown panel: {component}</div>;
     }
   }, []);
+
+  // Render mobile layout for small screens
+  if (isMobile) {
+    return <MobilePlayground />;
+  }
 
   return (
     <div className="h-screen w-full flex flex-col bg-background overflow-hidden">
