@@ -44,7 +44,11 @@ loader.init().then((monaco) => {
   });
 });
 
-const MonacoEditor: React.FC = () => {
+interface MonacoEditorProps {
+  isMobile?: boolean;
+}
+
+const MonacoEditor: React.FC<MonacoEditorProps> = ({ isMobile = false }) => {
   const { openTabs, activeTabId, setActiveTab, updateFileContent } = usePlaygroundStore();
   const editorRef = useRef<unknown>(null);
 
@@ -124,34 +128,36 @@ const MonacoEditor: React.FC = () => {
             onMount={handleEditorMount}
             theme="codeforge-dark"
             options={{
-              minimap: { enabled: true, scale: 1, showSlider: 'mouseover' },
-              fontSize: 14,
+              minimap: { enabled: !isMobile, scale: 1, showSlider: 'mouseover' },
+              fontSize: isMobile ? 16 : 14,
               fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-              fontLigatures: true,
-              lineNumbers: 'on',
+              fontLigatures: !isMobile,
+              lineNumbers: isMobile ? 'off' : 'on',
               renderWhitespace: 'selection',
               scrollBeyondLastLine: false,
               automaticLayout: true,
               tabSize: 4,
               insertSpaces: true,
-              wordWrap: 'off',
-              padding: { top: 16, bottom: 16 },
+              wordWrap: isMobile ? 'on' : 'off',
+              padding: { top: isMobile ? 8 : 16, bottom: isMobile ? 8 : 16 },
               cursorBlinking: 'smooth',
               cursorSmoothCaretAnimation: 'on',
               smoothScrolling: true,
               bracketPairColorization: { enabled: true },
               guides: {
-                bracketPairs: true,
-                indentation: true,
+                bracketPairs: !isMobile,
+                indentation: !isMobile,
               },
               overviewRulerBorder: false,
               hideCursorInOverviewRuler: true,
               scrollbar: {
                 vertical: 'auto',
-                horizontal: 'auto',
-                verticalScrollbarSize: 10,
+                horizontal: isMobile ? 'hidden' : 'auto',
+                verticalScrollbarSize: isMobile ? 8 : 10,
                 horizontalScrollbarSize: 10,
               },
+              folding: !isMobile,
+              glyphMargin: !isMobile,
             }}
           />
         )}
