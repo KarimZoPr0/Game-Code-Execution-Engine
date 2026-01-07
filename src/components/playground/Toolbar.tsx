@@ -8,6 +8,8 @@ import {
   Download,
   Upload,
   Trash2,
+  FolderOpen,
+  FileArchive,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePlaygroundStore } from '@/store/playgroundStore';
@@ -17,6 +19,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -36,8 +41,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { downloadProject } from '@/lib/storage/projectExport';
-import { parseProjectFile, ProjectImportError } from '@/lib/storage/projectImport';
+import { downloadProject, downloadProjectAsZip } from '@/lib/storage/projectExport';
+import { parseProjectFile, parseLocalFiles, ProjectImportError } from '@/lib/storage/projectImport';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ProfileMenu from '@/components/profile/ProfileMenu';
@@ -61,6 +66,7 @@ const Toolbar: React.FC = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const handleCreateProject = () => {
     if (newProjectName.trim()) {
@@ -99,8 +105,26 @@ const Toolbar: React.FC = () => {
     }
   };
 
+  const handleSaveAsZip = async () => {
+    if (!currentProject) return;
+    setIsExporting(true);
+    try {
+      await downloadProjectAsZip(currentProject);
+      toast.success('Project saved as ZIP');
+    } catch (e) {
+      console.error('Save as ZIP error:', e);
+      toast.error('Failed to save project');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleImportClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleUploadFolderClick = () => {
+    folderInputRef.current?.click();
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -124,6 +148,31 @@ const Toolbar: React.FC = () => {
       // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsImporting(true);
+    try {
+      const { name, files: projectFiles } = await parseLocalFiles(files);
+      await importProject(name, projectFiles);
+      toast.success(`Project "${name}" imported from folder`);
+    } catch (err) {
+      if (err instanceof ProjectImportError) {
+        toast.error(err.message);
+      } else {
+        toast.error('Failed to import folder');
+      }
+      console.error('Folder import error:', err);
+    } finally {
+      setIsImporting(false);
+      // Reset file input
+      if (folderInputRef.current) {
+        folderInputRef.current.value = '';
       }
     }
   };
@@ -170,15 +219,39 @@ const Toolbar: React.FC = () => {
                 <FolderPlus className="w-4 h-4 mr-2" />
                 New Project
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleImportClick} disabled={isImporting} className="text-[#c9d1d9]">
-                <Upload className="w-4 h-4 mr-2" />
-                {isImporting ? 'Importing...' : 'Import Project'}
-              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="text-[#c9d1d9]">
+                  <Upload className="w-4 h-4 mr-2" />
+                  {isImporting ? 'Importing...' : 'Import'}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="bg-[#161b22] border-[#30363d]">
+                  <DropdownMenuItem onClick={handleImportClick} disabled={isImporting} className="text-[#c9d1d9]">
+                    <FileArchive className="w-4 h-4 mr-2" />
+                    From .codeforge file
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleUploadFolderClick} disabled={isImporting} className="text-[#c9d1d9]">
+                    <FolderOpen className="w-4 h-4 mr-2" />
+                    From local folder
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuSeparator className="bg-[#30363d]" />
-              <DropdownMenuItem onClick={handleExportProject} disabled={isExporting || !currentProject} className="text-[#c9d1d9]">
-                <Download className="w-4 h-4 mr-2" />
-                {isExporting ? 'Exporting...' : 'Export Project'}
-              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={isExporting || !currentProject} className="text-[#c9d1d9]">
+                  <Download className="w-4 h-4 mr-2" />
+                  {isExporting ? 'Exporting...' : 'Export'}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="bg-[#161b22] border-[#30363d]">
+                  <DropdownMenuItem onClick={handleExportProject} disabled={isExporting || !currentProject} className="text-[#c9d1d9]">
+                    <FileArchive className="w-4 h-4 mr-2" />
+                    As .codeforge file
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSaveAsZip} disabled={isExporting || !currentProject} className="text-[#c9d1d9]">
+                    <FolderOpen className="w-4 h-4 mr-2" />
+                    As ZIP (files & folders)
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuItem 
                 onClick={() => setShowDeleteConfirm(true)} 
                 disabled={projects.length <= 1 || !currentProject}
@@ -230,12 +303,24 @@ const Toolbar: React.FC = () => {
         </div>
       </div>
 
-      {/* Hidden file input for import */}
+      {/* Hidden file input for .codeforge import */}
       <input
         ref={fileInputRef}
         type="file"
         accept=".codeforge,.json"
         onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      {/* Hidden folder input for local folder import */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        // @ts-expect-error webkitdirectory is not in standard types
+        webkitdirectory=""
+        directory=""
+        multiple
+        onChange={handleFolderSelect}
         className="hidden"
       />
 
