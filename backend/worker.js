@@ -6,11 +6,15 @@ const path = require('path');
 const os = require('os');
 const queue = require('./queue');
 
-const BUILDS_DIR = path.join(__dirname, 'builds');
+const BUILDS_DIR = path.join(__dirname, 'builds'); // Persistent storage
+const TMP_BUILDS_DIR = '/tmp/builds'; // RAM disk (tmpfs) for fast compilation
 
-// Ensure builds directory exists
+// Ensure both directories exist
 if (!fs.existsSync(BUILDS_DIR)) {
     fs.mkdirSync(BUILDS_DIR, { recursive: true });
+}
+if (!fs.existsSync(TMP_BUILDS_DIR)) {
+    fs.mkdirSync(TMP_BUILDS_DIR, { recursive: true });
 }
 
 // Default emcc flags for simple builds
@@ -55,30 +59,37 @@ class Worker {
     async processJob(job) {
         this.busy = true;
         this.currentJob = job;
-        const buildDir = path.join(BUILDS_DIR, job.id);
+        const startTime = Date.now();
+
+        // Build in tmpfs (RAM) for speed
+        const tmpBuildDir = path.join(TMP_BUILDS_DIR, job.id);
+        // Final location in persistent storage
+        const finalBuildDir = path.join(BUILDS_DIR, job.id);
 
         try {
-            // Create build directory
-            fs.mkdirSync(buildDir, { recursive: true });
+            // Create temp build directory
+            fs.mkdirSync(tmpBuildDir, { recursive: true });
 
             // Update job status
             queue.updateJob(job.id, {
                 status: 'compiling',
                 phase: 'compiling',
-                buildDir,
+                buildDir: finalBuildDir,
                 workerId: this.id
             });
             this.emit(job.id, { type: 'status', phase: 'compiling', message: 'Compiling...' });
 
-            // Write source files
+            // Write source files to tmpfs
+            const writeStart = Date.now();
             for (const file of job.files) {
-                const filePath = path.join(buildDir, file.path);
+                const filePath = path.join(tmpBuildDir, file.path);
                 const fileDir = path.dirname(filePath);
                 if (!fs.existsSync(fileDir)) {
                     fs.mkdirSync(fileDir, { recursive: true });
                 }
                 fs.writeFileSync(filePath, file.content);
             }
+            const writeTime = Date.now() - writeStart;
 
             // Determine build flags
             let flags;
@@ -114,9 +125,9 @@ class Worker {
                 }
             }
 
-            // Build the emcc command
+            // Build the emcc command (compile in tmpfs)
             const entry = job.entry || 'main.c';
-            const outputPath = path.join(buildDir, outputFile);
+            const outputPath = path.join(tmpBuildDir, outputFile);
 
             const emccArgs = [
                 entry,
@@ -126,25 +137,34 @@ class Worker {
 
             console.log(`[Worker ${this.id}] Building ${job.id}: emcc ${emccArgs.join(' ')}`);
 
-            // Run emcc
-            const result = await this.runEmcc(emccArgs, buildDir, job.id);
+            // Run emcc compilation
+            const compileStart = Date.now();
+            const result = await this.runEmcc(emccArgs, tmpBuildDir, job.id);
+            const compileTime = Date.now() - compileStart;
 
             if (result.success) {
                 // Copy reload.js for hot-reload support
                 const reloadSrc = path.join(__dirname, 'reload.js');
                 if (fs.existsSync(reloadSrc)) {
-                    fs.copyFileSync(reloadSrc, path.join(buildDir, 'reload.js'));
+                    fs.copyFileSync(reloadSrc, path.join(tmpBuildDir, 'reload.js'));
                 }
 
-                // Create preview HTML
-                this.createPreviewHtml(buildDir, outputFile);
+                // Create preview HTML in tmpfs
+                this.createPreviewHtml(tmpBuildDir, outputFile);
+
+                // Copy build results to persistent storage (async, non-blocking)
+                const copyStart = Date.now();
+                fs.mkdirSync(finalBuildDir, { recursive: true });
+                this.copyDirSync(tmpBuildDir, finalBuildDir);
+                const copyTime = Date.now() - copyStart;
 
                 // Handle GAME module targeting existing MAIN build
+                const hotReloadStart = Date.now();
                 if (job.targetBuildId && outputFile === 'game.wasm') {
                     const targetDir = path.join(BUILDS_DIR, job.targetBuildId);
                     if (fs.existsSync(targetDir)) {
                         fs.copyFileSync(
-                            path.join(buildDir, 'game.wasm'),
+                            path.join(finalBuildDir, 'game.wasm'),
                             path.join(targetDir, 'game.wasm')
                         );
                         this.emit(job.id, {
@@ -154,6 +174,10 @@ class Worker {
                         });
                     }
                 }
+                const hotReloadTime = Date.now() - hotReloadStart;
+
+                const totalTime = Date.now() - startTime;
+                console.log(`[Worker ${this.id}] Build ${job.id} timing: write=${writeTime}ms, compile=${compileTime}ms, copy=${copyTime}ms, hotreload=${hotReloadTime}ms, total=${totalTime}ms`);
 
                 queue.updateJob(job.id, {
                     status: 'done',
@@ -291,6 +315,23 @@ ${jsFile ? `<script src="${jsFile}" async defer></script>` : ''}
 
     emit(jobId, event) {
         queue.emit(`job:${jobId}`, { buildId: jobId, ...event });
+    }
+
+    /**
+     * Recursively copy directory contents
+     */
+    copyDirSync(src, dest) {
+        const entries = fs.readdirSync(src, { withFileTypes: true });
+        for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            if (entry.isDirectory()) {
+                fs.mkdirSync(destPath, { recursive: true });
+                this.copyDirSync(srcPath, destPath);
+            } else {
+                fs.copyFileSync(srcPath, destPath);
+            }
+        }
     }
 }
 
