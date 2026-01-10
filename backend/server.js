@@ -191,6 +191,12 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
 });
 
+// KTH Cloud health check
+app.get('/healthz', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+
 // ============================================================================
 // START SERVER
 // ============================================================================
