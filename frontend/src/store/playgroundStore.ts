@@ -434,7 +434,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   // Template actions
   loadTemplates: async () => {
-    const { templatesLoading, templatesLoaded } = get();
+    const { templatesLoading, templatesLoaded, setCurrentProject } = get();
     if (templatesLoading || templatesLoaded) return;
 
     set({ templatesLoading: true });
@@ -446,10 +446,11 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       if (loadedTemplates.length > 0) {
         set({
           projects: loadedTemplates,
-          currentProject: loadedTemplates[0],
           templatesLoaded: true,
           templatesLoading: false,
         });
+        // Use setCurrentProject to properly initialize buildConfig
+        setCurrentProject(loadedTemplates[0]);
       } else {
         set({ templatesLoaded: true, templatesLoading: false });
       }
