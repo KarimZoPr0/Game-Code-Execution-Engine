@@ -39,6 +39,7 @@ jobs:
         working-directory: ./frontend
         env:
           GITHUB_PAGES: true
+          VITE_API_BASE_URL: ${{ secrets.BACKEND_URL }}
         run: npm run build
 
       - name: Setup Pages
