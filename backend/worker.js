@@ -301,7 +301,9 @@ class WorkerPool extends EventEmitter {
     constructor(options = {}) {
         super();
         this.workers = [];
-        this.poolSize = options.poolSize || Math.max(1, os.cpus().length - 1);
+        // Use MAX_WORKERS env var, or default to min(cpus, 4) to avoid overwhelming limited CPU
+        const defaultWorkers = Math.min(Math.max(1, os.cpus().length - 1), 4);
+        this.poolSize = parseInt(process.env.MAX_WORKERS) || options.poolSize || defaultWorkers;
         this.running = false;
         this.onBuildComplete = null;
     }
