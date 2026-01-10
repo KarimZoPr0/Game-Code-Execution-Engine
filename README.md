@@ -13,7 +13,7 @@ docker-compose up
 ### Backend
 ```bash
 cd backend
-docker-compose up --build
+docker-compose up
 ```
 
 ## Features
