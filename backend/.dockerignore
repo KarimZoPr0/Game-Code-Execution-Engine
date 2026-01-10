@@ -1,0 +1,18 @@
+# Ignore node_modules
+node_modules/
+npm-debug.log
+
+# Ignore build outputs (will be recreated)
+builds/
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore IDE files
+.vscode/
+*.swp
+*.swo
+
+# Ignore docs
+README.md

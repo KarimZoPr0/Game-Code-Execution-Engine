@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Build Preview</title>
+    <style>
+        html, body { margin: 0; background: #222; height: 100%; overflow: hidden; }
+        #wrapper { display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; }
+        canvas { border: 1px solid #555; display: block; touch-action: none; }
+    </style>
+</head>
+<body>
+<div id="wrapper">
+    <canvas id="canvas" width="640" height="480"></canvas>
+</div>
+<script>
+    const BASE_W = 640, BASE_H = 480;
+    const canvas = document.getElementById('canvas');
+
+    function setCssSize() {
+        const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
+        canvas.style.width = `${BASE_W * scale}px`;
+        canvas.style.height = `${BASE_H * scale}px`;
+    }
+    window.addEventListener('resize', setCssSize);
+    setCssSize();
+
+    window.Module = {
+        canvas,
+        locateFile: p => p,
+        onRuntimeInitialized() {
+            const DPR = window.devicePixelRatio || 1;
+            canvas.width = BASE_W * DPR;
+            canvas.height = BASE_H * DPR;
+            if (Module.SDL2) Module.SDL2.resizeCanvas(canvas.width, canvas.height, false);
+            setCssSize();
+        }
+    };
+</script>
+<script src="index.js" async defer></script>
+<script src="reload.js" async defer></script>
+</body>
+</html>

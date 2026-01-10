@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(test:*)",
+      "Bash(dir:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(ls:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(emcc:*)",
+      "Bash(timeout 10 node:*)",
+      "Bash(docker ps:*)",
+      "Bash(xargs:*)",
+      "Bash(npm install)",
+      "Bash(timeout 5 node:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)"
+    ]
+  }
+}

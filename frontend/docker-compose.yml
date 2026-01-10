@@ -1,0 +1,17 @@
+# Playpen Canvas Frontend
+# Vite React app served via Nginx
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3001
+        VITE_SUPABASE_URL: https://jxeinibdshcaltjanwdm.supabase.co
+        VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4ZWluaWJkc2hjYWx0amFud2RtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0NTg0NjEsImV4cCI6MjA4MzAzNDQ2MX0.JXpnXo9msB-sdMsD3WfSF79qHDYn1XxUEsuDVLn29Ek
+        VITE_SUPABASE_PROJECT_ID: jxeinibdshcaltjanwdm
+    container_name: playpen-frontend
+    ports:
+      - "8080:80"
+    restart: unless-stopped

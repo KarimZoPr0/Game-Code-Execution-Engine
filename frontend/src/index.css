@@ -1,0 +1,298 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Ayu Dark theme colors matching Monaco editor */
+    --background: 217 35% 6%;
+    /* #0A0E14 - main background */
+    --foreground: 35 7% 70%;
+    /* #B3B1AD - main text color */
+
+    --card: 216 29% 8%;
+    /* #0D1016 - slightly lighter bg */
+    --card-foreground: 35 7% 70%;
+
+    --popover: 216 29% 8%;
+    /* #0D1016 */
+    --popover-foreground: 35 7% 70%;
+
+    --primary: 25 100% 63%;
+    /* #FF8F40 - orange accent */
+    --primary-foreground: 217 35% 6%;
+
+    --secondary: 215 24% 14%;
+    /* #1B2733 - borders/dividers */
+    --secondary-foreground: 205 20% 58%;
+
+    --muted: 215 29% 19%;
+    /* #253340 - selections */
+    --muted-foreground: 205 20% 43%;
+    /* #6C7A88 - inactive text */
+
+    --accent: 25 100% 63%;
+    /* #FF8F40 - orange accent */
+    --accent-foreground: 217 35% 6%;
+
+    --destructive: 4 73% 72%;
+    /* #F07178 - red */
+    --destructive-foreground: 35 7% 70%;
+
+    --border: 215 24% 14%;
+    /* #1B2733 */
+    --input: 217 21% 10%;
+    /* #131721 */
+    --ring: 25 100% 63%;
+    /* #FF8F40 */
+
+    --radius: 0.375rem;
+
+    /* IDE-specific tokens - Ayu Dark */
+    --panel-bg: 217 35% 6%;
+    /* #0A0E14 */
+    --panel-header: 216 29% 8%;
+    /* #0D1016 */
+    --panel-border: 215 24% 14%;
+    /* #1B2733 */
+    --tab-active: 25 100% 63%;
+    /* #FF8F40 - orange */
+    --tab-inactive: 217 21% 10%;
+    /* #131721 */
+    --editor-bg: 217 35% 6%;
+    /* #0A0E14 */
+    --console-bg: 217 35% 6%;
+    /* #0A0E14 */
+    --file-tree-bg: 216 29% 8%;
+    /* #0D1016 */
+    --file-hover: 217 21% 10%;
+    /* #131721 */
+    --file-selected: 215 29% 19%;
+    /* #253340 */
+    --success: 78 63% 63%;
+    /* #C2D94C - green */
+    --warning: 36 100% 76%;
+    /* #FFEE99 - yellow */
+
+    --sidebar-background: 216 29% 8%;
+    --sidebar-foreground: 35 7% 70%;
+    --sidebar-primary: 25 100% 63%;
+    --sidebar-primary-foreground: 217 35% 6%;
+    --sidebar-accent: 217 21% 10%;
+    --sidebar-accent-foreground: 35 7% 70%;
+    --sidebar-border: 215 24% 14%;
+    --sidebar-ring: 25 100% 63%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+}
+
+/* FlexLayout overrides - critical for instant resizing */
+.flexlayout__layout {
+  --color-text: hsl(var(--foreground));
+  --color-background: hsl(var(--panel-bg));
+  --color-tabset-background: hsl(var(--panel-header));
+  --color-tabset-divider-line: hsl(var(--panel-border));
+  --color-tab-selected: hsl(var(--tab-active));
+  --color-tab-unselected: hsl(var(--tab-inactive));
+  --color-tab-selected-background: hsl(var(--panel-header));
+  --color-tab-unselected-background: transparent;
+  --color-splitter: hsl(var(--panel-border));
+  --color-splitter-hover: hsl(var(--primary));
+  --color-border-background: hsl(var(--panel-bg));
+  --color-border: hsl(var(--panel-border));
+  --color-popup-border: hsl(var(--panel-border));
+  --color-popup-unselected: hsl(var(--foreground));
+  --color-popup-background: hsl(var(--popover));
+  --color-popup-selected: hsl(var(--primary));
+  --color-popup-selected-background: hsl(var(--primary) / 0.2);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.flexlayout__splitter {
+  background: hsl(var(--panel-border)) !important;
+  transition: none !important;
+}
+
+.flexlayout__splitter:hover {
+  background: hsl(var(--primary)) !important;
+}
+
+.flexlayout__tab {
+  background: hsl(var(--panel-bg)) !important;
+}
+
+.flexlayout__tabset {
+  background: hsl(var(--panel-header)) !important;
+}
+
+.flexlayout__tabset_header {
+  background: hsl(var(--panel-header)) !important;
+  border-bottom: 1px solid hsl(var(--panel-border)) !important;
+}
+
+.flexlayout__tab_button {
+  padding: 4px 12px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: hsl(var(--muted-foreground)) !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  border-bottom: 2px solid transparent !important;
+}
+
+.flexlayout__tab_button--selected {
+  color: hsl(var(--primary)) !important;
+  border-bottom-color: hsl(var(--primary)) !important;
+}
+
+.flexlayout__tab_button:hover {
+  color: hsl(var(--foreground)) !important;
+}
+
+.flexlayout__tab_button_content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flexlayout__tab_button_trailing {
+  margin-left: 6px;
+  opacity: 0.6;
+}
+
+.flexlayout__tab_button_trailing:hover {
+  opacity: 1;
+}
+
+.flexlayout__tabset_tabbar_outer {
+  background: hsl(var(--panel-header)) !important;
+}
+
+.flexlayout__tabset-selected {
+  border: 1px solid hsl(var(--primary) / 0.3) !important;
+}
+
+.flexlayout__tabset_header_content {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+.flexlayout__tab_toolbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding-right: 8px !important;
+}
+
+.flexlayout__tab_toolbar_button {
+  width: 20px !important;
+  height: 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 3px !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+.flexlayout__tab_toolbar_button:hover {
+  background: hsl(var(--muted)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.flexlayout__tab_toolbar_sticky_buttons_container {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+.flexlayout__border {
+  background: hsl(var(--panel-bg)) !important;
+}
+
+.flexlayout__border_button {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+.flexlayout__border_button--selected {
+  color: hsl(var(--primary)) !important;
+}
+
+.flexlayout__popup_menu {
+  background: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--panel-border)) !important;
+  border-radius: var(--radius) !important;
+}
+
+.flexlayout__popup_menu_item {
+  padding: 6px 12px !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.flexlayout__popup_menu_item:hover {
+  background: hsl(var(--primary) / 0.2) !important;
+  color: hsl(var(--primary)) !important;
+}
+
+/* Tab maximize button */
+.flexlayout__tab_button_overflow {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+.flexlayout__tab_button_overflow:hover {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Floating windows */
+.flexlayout__floating_window {
+  background: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--panel-border)) !important;
+  border-radius: var(--radius) !important;
+}
+
+/* Disable all transitions for instant resize */
+.flexlayout__layout * {
+  transition: none !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--panel-bg));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Excalidraw container */
+.excalidraw {
+  --color-primary: hsl(var(--primary)) !important;
+}

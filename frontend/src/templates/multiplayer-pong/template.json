@@ -1,0 +1,4 @@
+{
+    "name": "Multiplayer Pong",
+    "description": "A networked multiplayer pong game with SDL2 and SDL_net"
+}

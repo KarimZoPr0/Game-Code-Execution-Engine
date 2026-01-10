@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+npm-debug.log
+bun.lockb
+
+# Build output (will be recreated)
+dist/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files (use build args instead)
+.env
+.env.local
+.env.*.local
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Tests
+coverage/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# Documentation
+README.md
+
+# Supabase local config
+supabase/
+
+# Misc
+.DS_Store
+Thumbs.db

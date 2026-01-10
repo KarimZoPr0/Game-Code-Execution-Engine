@@ -1,0 +1,45 @@
+{
+    "debug_main": [
+        "sdl_app.c",
+        "-o",
+        "index.js",
+        "-sUSE_SDL=2",
+        "-sMAIN_MODULE=1",
+        "-sEXPORT_ALL=1",
+        "-sFORCE_FILESYSTEM=1",
+        "-sALLOW_MEMORY_GROWTH=1",
+        "-sASSERTIONS=1",
+        "-O0",
+        "-sWASM_BIGINT",
+        "-sEXPORTED_RUNTIME_METHODS=[cwrap,addFunction,wasmMemory,wasmTable]"
+    ],
+    "debug_game": [
+        "game/game.c",
+        "-o",
+        "game.wasm",
+        "-sUSE_SDL=2",
+        "-O0",
+        "-sSIDE_MODULE=2"
+    ],
+    "release_main": [
+        "sdl_app.c",
+        "-o",
+        "index.js",
+        "-sUSE_SDL=2",
+        "-sMAIN_MODULE=1",
+        "-sEXPORT_ALL=1",
+        "-sFORCE_FILESYSTEM=1",
+        "-sALLOW_MEMORY_GROWTH=1",
+        "-O2",
+        "-sWASM_BIGINT",
+        "-sEXPORTED_RUNTIME_METHODS=[cwrap,addFunction,wasmMemory,wasmTable]"
+    ],
+    "release_game": [
+        "game/game.c",
+        "-o",
+        "game.wasm",
+        "-sUSE_SDL=2",
+        "-O2",
+        "-sSIDE_MODULE=2"
+    ]
+}

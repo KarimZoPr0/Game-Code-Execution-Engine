@@ -1,0 +1,4 @@
+{
+    "name": "Live Coding Demo",
+    "description": "A hot-reloadable SDL2 game with a paddle and ball"
+}

@@ -1,0 +1,27 @@
+# Build Server
+# Backend with Emscripten for WASM compilation
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: build-server
+    ports:
+      - "3001:3001"   # Express API
+      - "8081:8081"   # Hot-reload WebSocket
+      - "1234:1234"   # Game WebSocket
+    volumes:
+      - builds_data:/app/builds
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  builds_data:
