@@ -4,6 +4,7 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
+// GitHub Pages deployment configuration
 export default defineConfig(({ mode }) => ({
   base: process.env.GITHUB_PAGES ? '/Game-Code-Execution-Engine/' : '/',
   server: {
