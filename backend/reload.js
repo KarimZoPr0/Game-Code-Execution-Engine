@@ -61,8 +61,11 @@
 
     function setupWebSocket() {
         // Connect to the build server's WebSocket
-        const wsPort = 8081;
-        const wsUrl = `ws://${location.hostname}:${wsPort}`;
+        // The reload.js is served from /preview/:id/, so we can infer the backend URL
+        // Use wss:// for HTTPS, ws:// for HTTP
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // Connect to the same host that's serving this preview
+        const wsUrl = `${protocol}//${location.host}/ws`;
 
         let ws;
         let reconnectTimer = null;

@@ -8,12 +8,15 @@ const WebSocket = require('ws');
 const queue = require('./queue');
 const worker = require('./worker');
 
+
 const app = express();
 const PORT = process.env.PORT || 3001;
-const WS_PORT = 8081;
 
-// WebSocket server for hot-reload notifications
-const wss = new WebSocket.Server({ port: WS_PORT, host: '0.0.0.0' });
+// Create HTTP server (needed for WebSocket upgrade)
+const server = http.createServer(app);
+
+// WebSocket server for hot-reload notifications - attach to HTTP server
+const wss = new WebSocket.Server({ noServer: true });
 
 function notifyHotReload() {
   wss.clients.forEach(client => {
@@ -201,9 +204,23 @@ app.get('/healthz', (req, res) => {
 // START SERVER
 // ============================================================================
 
-app.listen(PORT, '0.0.0.0', () => {
+// Handle WebSocket upgrade requests
+server.on('upgrade', (request, socket, head) => {
+  const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
+
+  if (pathname === '/ws') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] Build server running on http://localhost:${PORT}`);
-  console.log(`[Server] WebSocket for hot-reload on ws://localhost:${WS_PORT}`);
+  console.log(`[Server] WebSocket for hot-reload on ws://localhost:${PORT}/ws`);
   console.log(`[Server] API endpoints:`);
   console.log(`  POST /api/build          - Submit build`);
   console.log(`  GET  /api/build/:id/events - SSE stream`);
