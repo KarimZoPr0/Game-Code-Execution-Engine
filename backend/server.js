@@ -169,7 +169,7 @@ app.get('/api/build/:id/result', (req, res) => {
 app.get('/preview/:id/*', (req, res) => {
   const { id } = req.params;
   const filePath = req.params[0] || 'index.html';
-  const buildsDir = path.join('/dev/shm/builds', id);
+  const buildsDir = path.join('/tmp/builds', id);
   const fullPath = path.join(buildsDir, filePath);
 
   // Security: ensure path is within builds directory
