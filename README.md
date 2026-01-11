@@ -2,6 +2,9 @@
 
 A comprehensive game development platform featuring a web-based code editor and execution engine powered by WebAssembly.
 
+## Live Demo
+[Game Code Execution Engine](https://karimzopr0.github.io/Game-Code-Execution-Engine/)
+
 ## Getting Started
 
 ### Frontend
