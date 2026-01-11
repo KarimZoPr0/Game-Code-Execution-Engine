@@ -256,7 +256,10 @@ server.on('upgrade', (request, socket, head) => {
       wss.emit('connection', ws, request);
     });
   } else {
-    socket.destroy();
+    // Route all other WebSocket connections to the game server
+    wssGame.handleUpgrade(request, socket, head, (ws) => {
+      wssGame.emit('connection', ws, request);
+    });
   }
 });
 
@@ -290,11 +293,10 @@ process.on('SIGINT', () => {
 });
 
 // ============================================================================
-// GAME SERVER (Port 1234) - Hybrid Multiplayer (Binary + JSON)
+// GAME SERVER - Hybrid Multiplayer (Binary + JSON)
 // ============================================================================
 
-const GAME_PORT = 1234;
-const wssGame = new WebSocket.Server({ port: GAME_PORT, host: '0.0.0.0' });
+const wssGame = new WebSocket.Server({ noServer: true });
 
 // Room-based game sessions (for JSON clients)
 const gameRooms = new Map();     // roomId -> { players: Set, state: 'waiting'|'playing' }
@@ -575,6 +577,6 @@ function handleJsonMessage(ws, msg) {
   }
 }
 
-console.log(`[GameServer] Hybrid multiplayer (binary+JSON) listening on ws://localhost:${GAME_PORT}`);
+
 
 

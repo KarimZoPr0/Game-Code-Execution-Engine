@@ -39,8 +39,8 @@ static void net_try_connect(GameContext *ctx) {
     if (ctx->connected) return;
 
     IPaddress ip;
-    // Connect to local proxy/server
-    if (SDLNet_ResolveHost(&ip, "localhost", 1234) != 0) return;
+    // Connect to KTH Cloud backend
+    if (SDLNet_ResolveHost(&ip, "gcee-backend.app.cloud.cbh.kth.se", 443) != 0) return;
 
     ctx->socket = SDLNet_TCP_Open(&ip);
     if (!ctx->socket) return;
