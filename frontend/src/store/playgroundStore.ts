@@ -20,6 +20,7 @@ export interface ProjectFile {
   language: string;
   isFolder: boolean;
   children?: ProjectFile[];
+  isBase64?: boolean;
 }
 
 export interface Project {
@@ -37,6 +38,7 @@ export interface OpenTab {
   content: string;
   language: string;
   isDirty: boolean;
+  isBase64?: boolean;
 }
 
 export interface ConsoleMessage {
@@ -245,17 +247,19 @@ interface PlaygroundState {
   createFile: (parentId: string | null, index: number, type: 'file' | 'folder') => ProjectFile | null;
   deleteFiles: (fileIds: string[]) => void;
   moveFiles: (dragIds: string[], parentId: string | null, index: number) => void;
+  addFiles: (files: { name: string; content: string; isBase64?: boolean }[], parentId?: string | null) => void;
+  addFolders: (folders: ProjectFile[], parentId?: string | null) => void;
 }
 
 // ============================================================================
 // HELPERS
 // ============================================================================
 
-const flattenFiles = (files: ProjectFile[], parentPath = ""): { path: string; content: string; name: string }[] => {
-  const out: { path: string; content: string; name: string }[] = [];
+const flattenFiles = (files: ProjectFile[], parentPath = ""): { path: string; content: string; name: string; isBase64?: boolean }[] => {
+  const out: { path: string; content: string; name: string; isBase64?: boolean }[] = [];
   for (const file of files) {
     const filePath = parentPath ? `${parentPath}/${file.name}` : file.name;
-    if (!file.isFolder) out.push({ path: filePath, content: file.content, name: file.name });
+    if (!file.isFolder) out.push({ path: filePath, content: file.content, name: file.name, isBase64: file.isBase64 });
     if (file.children) out.push(...flattenFiles(file.children, filePath));
   }
   return out;
@@ -524,6 +528,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         content: file.content,
         language: file.language,
         isDirty: false,
+        isBase64: file.isBase64,
       };
       set({ openTabs: [...openTabs, newTab], activeTabId: newTab.id });
     }
@@ -1042,6 +1047,83 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
     const updatedFiles = insertFiles(filesWithoutDragged, parentId);
     const updatedProject = { ...currentProject, files: updatedFiles, updatedAt: new Date() };
+
+    set({
+      currentProject: updatedProject,
+      projects: get().projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+    });
+  },
+
+  // Add external files to the project (for drag-drop)
+  addFiles(files, parentId = null) {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    const newFiles: ProjectFile[] = files.map((f) => ({
+      id: nowId('file'),
+      name: f.name,
+      content: f.content,
+      language: f.name.split('.').pop() || 'text',
+      isFolder: false,
+      isBase64: f.isBase64,
+    }));
+
+    // Helper to insert files into parent folder
+    const insertIntoParent = (items: ProjectFile[], targetId: string): ProjectFile[] => {
+      return items.map((item) => {
+        if (item.id === targetId && item.isFolder) {
+          return { ...item, children: [...(item.children || []), ...newFiles] };
+        }
+        if (item.children) {
+          return { ...item, children: insertIntoParent(item.children, targetId) };
+        }
+        return item;
+      });
+    };
+
+    const updatedFiles = parentId
+      ? insertIntoParent(currentProject.files, parentId)
+      : [...currentProject.files, ...newFiles];
+
+    const updatedProject = {
+      ...currentProject,
+      files: updatedFiles,
+      updatedAt: new Date(),
+    };
+
+    set({
+      currentProject: updatedProject,
+      projects: get().projects.map((p) => (p.id === currentProject.id ? updatedProject : p)),
+    });
+  },
+
+  // Add external folders to the project (for drag-drop)
+  addFolders(folders, parentId = null) {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    // Helper to insert folders into parent folder
+    const insertIntoParent = (items: ProjectFile[], targetId: string): ProjectFile[] => {
+      return items.map((item) => {
+        if (item.id === targetId && item.isFolder) {
+          return { ...item, children: [...(item.children || []), ...folders] };
+        }
+        if (item.children) {
+          return { ...item, children: insertIntoParent(item.children, targetId) };
+        }
+        return item;
+      });
+    };
+
+    const updatedFiles = parentId
+      ? insertIntoParent(currentProject.files, parentId)
+      : [...currentProject.files, ...folders];
+
+    const updatedProject = {
+      ...currentProject,
+      files: updatedFiles,
+      updatedAt: new Date(),
+    };
 
     set({
       currentProject: updatedProject,

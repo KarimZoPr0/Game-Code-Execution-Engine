@@ -74,7 +74,7 @@ class Worker {
             });
             this.emit(job.id, { type: 'status', phase: 'compiling', message: 'Compiling...' });
 
-            // Write source files
+            // Write source files (supports both text and binary/base64)
             const writeStart = Date.now();
             for (const file of job.files) {
                 const filePath = path.join(buildDir, file.path);
@@ -82,7 +82,13 @@ class Worker {
                 if (!fs.existsSync(fileDir)) {
                     fs.mkdirSync(fileDir, { recursive: true });
                 }
-                fs.writeFileSync(filePath, file.content);
+                // Handle binary files (base64 encoded)
+                if (file.isBase64) {
+                    const buffer = Buffer.from(file.content, 'base64');
+                    fs.writeFileSync(filePath, buffer);
+                } else {
+                    fs.writeFileSync(filePath, file.content);
+                }
             }
             const writeTime = Date.now() - writeStart;
 
@@ -124,17 +130,21 @@ class Worker {
             const entry = job.entry || 'main.c';
             const outputPath = path.join(buildDir, outputFile);
 
-            const emccArgs = [
+            // Detect C++ based on entry file extension
+            const isCpp = entry.endsWith('.cpp') || entry.endsWith('.cc') || entry.endsWith('.cxx');
+            const compiler = isCpp ? 'em++' : 'emcc';
+
+            const compilerArgs = [
                 entry,
                 '-o', outputPath,
                 ...flags
             ];
 
-            console.log(`[Worker ${this.id}] Building ${job.id}: emcc ${emccArgs.join(' ')}`);
+            console.log(`[Worker ${this.id}] Building ${job.id}: ${compiler} ${compilerArgs.join(' ')}`);
 
-            // Run emcc compilation
+            // Run compilation
             const compileStart = Date.now();
-            const result = await this.runEmcc(emccArgs, buildDir, job.id);
+            const result = await this.runCompiler(compiler, compilerArgs, buildDir, job.id);
             const compileTime = Date.now() - compileStart;
 
             if (result.success) {
@@ -215,9 +225,9 @@ class Worker {
         this.pool.dispatch();
     }
 
-    runEmcc(args, cwd, jobId) {
+    runCompiler(compiler, args, cwd, jobId) {
         return new Promise((resolve) => {
-            const proc = spawn('emcc', args, {
+            const proc = spawn(compiler, args, {
                 cwd,
                 shell: true,
                 env: { ...process.env }

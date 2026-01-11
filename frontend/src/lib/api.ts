@@ -5,6 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001
 export interface BuildFile {
   path: string;
   content: string;
+  isBase64?: boolean; // For binary assets
 }
 
 // Build config (profile name -> args array)

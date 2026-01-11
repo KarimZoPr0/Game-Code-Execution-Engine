@@ -6,6 +6,7 @@ export interface ProjectFile {
   isFolder: boolean;
   children?: ProjectFile[];
   parentId?: string;
+  isBase64?: boolean; // For binary assets (images, audio, etc.)
 }
 
 export interface Project {

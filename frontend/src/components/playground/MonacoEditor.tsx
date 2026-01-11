@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Editor, { loader, OnMount } from '@monaco-editor/react';
 import { usePlaygroundStore } from '@/store/playgroundStore';
 import { cn } from '@/lib/utils';
@@ -97,8 +97,98 @@ interface MonacoEditorProps {
   isMobile?: boolean;
 }
 
+// Media file detection
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'];
+const AUDIO_EXTENSIONS = ['wav', 'mp3', 'ogg', 'flac', 'aac', 'm4a'];
+
+const isImageFile = (fileName: string) => {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  return IMAGE_EXTENSIONS.includes(ext);
+};
+
+const isAudioFile = (fileName: string) => {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  return AUDIO_EXTENSIONS.includes(ext);
+};
+
+const getMediaMimeType = (fileName: string) => {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const mimeTypes: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    bmp: 'image/bmp',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+    wav: 'audio/wav',
+    mp3: 'audio/mpeg',
+    ogg: 'audio/ogg',
+    flac: 'audio/flac',
+    aac: 'audio/aac',
+    m4a: 'audio/mp4',
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
+};
+
+// Media Preview Component
+const MediaPreview: React.FC<{ fileName: string; content: string; isBase64?: boolean }> = ({ fileName, content, isBase64 }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const isImage = isImageFile(fileName);
+  const isAudio = isAudioFile(fileName);
+  const mimeType = getMediaMimeType(fileName);
+
+  // For base64 content, create data URL
+  const dataUrl = isBase64 ? `data:${mimeType};base64,${content}` : content;
+
+  const togglePlay = () => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play();
+      }
+      setIsPlaying(!isPlaying);
+    }
+  };
+
+  if (isImage) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#0A0E14] p-4">
+        <div className="flex flex-col items-center gap-4">
+          <img
+            src={dataUrl}
+            alt={fileName}
+            className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-lg"
+          />
+          <p className="text-[#6C7A88] text-sm">{fileName}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isAudio) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#0A0E14] p-4">
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-[#B3B1AD] font-medium">{fileName}</p>
+          <audio
+            src={dataUrl}
+            controls
+            className="w-full max-w-md"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+};
+
 const MonacoEditor: React.FC<MonacoEditorProps> = ({ isMobile = false }) => {
-  const { openTabs, activeTabId, setActiveTab, updateFileContent } = usePlaygroundStore();
+  const { openTabs, activeTabId, setActiveTab, updateFileContent, closeTab } = usePlaygroundStore();
   const editorRef = useRef<unknown>(null);
 
   const activeTab = openTabs.find((tab) => tab.id === activeTabId);
@@ -150,7 +240,7 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({ isMobile = false }) => {
           <div
             key={tab.id}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-[#1B2733] min-w-fit",
+              "flex items-center gap-2 px-3 py-2 cursor-pointer border-r border-[#1B2733] min-w-fit group",
               "text-sm font-medium transition-colors",
               tab.id === activeTabId
                 ? "bg-[#0A0E14] text-[#B3B1AD] border-b-2 border-b-[#FF8F40]"
@@ -162,13 +252,31 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({ isMobile = false }) => {
               {tab.fileName}
               {tab.isDirty && <span className="text-[#FF8F40] ml-1">●</span>}
             </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                closeTab(tab.id);
+              }}
+              className="p-0.5 rounded hover:bg-[#253340] opacity-60 hover:opacity-100 transition-opacity"
+              title="Close tab"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         ))}
       </div>
 
-      {/* Editor */}
+      {/* Editor or Media Preview */}
       <div className="flex-1 overflow-hidden">
-        {activeTab && (
+        {activeTab && (isImageFile(activeTab.fileName) || isAudioFile(activeTab.fileName)) ? (
+          <MediaPreview
+            fileName={activeTab.fileName}
+            content={activeTab.content}
+            isBase64={activeTab.isBase64}
+          />
+        ) : activeTab && (
           <Editor
             height="100%"
             language={getLanguage(activeTab.language)}

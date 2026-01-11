@@ -2,9 +2,11 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
+const rateLimit = require('express-rate-limit');
 const queue = require('./queue');
 const worker = require('./worker');
 
@@ -29,12 +31,53 @@ function notifyHotReload() {
 // Export for worker to use
 module.exports.notifyHotReload = notifyHotReload;
 
+// Rate limiter for build endpoint
+const buildLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 builds per minute per IP
+  message: { error: 'Too many builds, please wait' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Build cleanup - remove builds older than 1 hour
+const CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
+const MAX_BUILD_AGE = 60 * 60 * 1000;    // 1 hour
+
+function cleanupOldBuilds() {
+  const buildsDir = '/tmp/builds';
+  if (!fs.existsSync(buildsDir)) return;
+
+  const now = Date.now();
+  let cleaned = 0;
+  try {
+    fs.readdirSync(buildsDir).forEach(dir => {
+      const fullPath = path.join(buildsDir, dir);
+      try {
+        const stats = fs.statSync(fullPath);
+        if (now - stats.mtimeMs > MAX_BUILD_AGE) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+          cleaned++;
+        }
+      } catch (e) { /* ignore individual errors */ }
+    });
+    if (cleaned > 0) {
+      console.log(`[Cleanup] Removed ${cleaned} old builds`);
+    }
+  } catch (e) {
+    console.error('[Cleanup] Error:', e.message);
+  }
+}
+
+setInterval(cleanupOldBuilds, CLEANUP_INTERVAL);
+cleanupOldBuilds(); // Run once at startup
+
 // Middleware
 app.use(cors({
   origin: true,
   credentials: true
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' })); // Increased for binary assets
 
 // Store SSE connections per build
 const sseConnections = new Map(); // buildId -> Set of response objects
@@ -44,7 +87,7 @@ const sseConnections = new Map(); // buildId -> Set of response objects
 // ============================================================================
 
 // POST /api/build - Submit a new build
-app.post('/api/build', (req, res) => {
+app.post('/api/build', buildLimiter, (req, res) => {
   try {
     const { files, entry, language, buildProfile, buildConfig, targetBuildId } = req.body;
 

@@ -31,14 +31,18 @@ const FileTreeContext = React.createContext<{
   onFileSelect?: () => void;
   onDeleteNode?: (id: string) => void;
   onRenameNode?: (id: string) => void;
+  onExternalDrop?: (folderId: string | null, files: DataTransfer) => void;
+  externalDragOver?: string | null;
+  setExternalDragOver?: (id: string | null) => void;
 }>({});
 
 const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
   const { openFile, openTabs, activeTabId, ensureEditorVisible } = usePlaygroundStore();
-  const { onFileSelect, onDeleteNode, onRenameNode } = React.useContext(FileTreeContext);
+  const { onFileSelect, onDeleteNode, onExternalDrop, externalDragOver, setExternalDragOver } = React.useContext(FileTreeContext);
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const isActive = activeTab?.fileId === node.data.data.id;
   const isFolder = node.isInternal;
+  const isExternalDropTarget = externalDragOver === node.id;
 
   const getFileIcon = () => {
     if (isFolder) {
@@ -103,9 +107,31 @@ const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
         node.state.isSelected && !isActive && 'bg-accent/50',
         node.state.isFocused && 'ring-1 ring-primary/50',
         node.state.isDragging && 'opacity-50',
-        node.state.willReceiveDrop && 'bg-primary/20'
+        node.state.willReceiveDrop && 'bg-primary/20',
+        isExternalDropTarget && 'ring-2 ring-primary bg-primary/20'
       )}
       onClick={handleClick}
+      onDragOver={(e) => {
+        // Handle external file drops on folders
+        if (isFolder && e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          e.stopPropagation();
+          setExternalDragOver?.(node.id);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (isFolder && externalDragOver === node.id) {
+          setExternalDragOver?.(null);
+        }
+      }}
+      onDrop={(e) => {
+        if (isFolder && e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          e.stopPropagation();
+          setExternalDragOver?.(null);
+          onExternalDrop?.(node.id, e.dataTransfer);
+        }
+      }}
     >
       {/* Folder toggle arrow */}
       {isFolder && (
@@ -177,10 +203,11 @@ interface FileTreeProps {
 }
 
 const FileTree: React.FC<FileTreeProps> = ({ onFileSelect }) => {
-  const { currentProject, renameFile, moveFiles, createFile, deleteFiles, openFile, ensureEditorVisible } = usePlaygroundStore();
+  const { currentProject, renameFile, moveFiles, createFile, deleteFiles, openFile, ensureEditorVisible, addFiles, addFolders } = usePlaygroundStore();
   const { ref, width, height } = useResizeObserver<HTMLDivElement>();
   const treeRef = useRef<TreeApi<TreeNode> | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [externalDragOver, setExternalDragOver] = useState<string | null>(null);
 
   const treeData = useMemo(() => {
     if (!currentProject) return [];
@@ -262,6 +289,107 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect }) => {
     return node.data.name.toLowerCase().includes(term.toLowerCase());
   }, []);
 
+  // Handle external file drop (for dropping external files into specific folders)
+  const handleExternalDrop = useCallback(async (parentId: string | null, dataTransfer: DataTransfer) => {
+    // Binary file extensions
+    const binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'wav', 'mp3', 'ogg', 'wasm', 'bin', 'dat'];
+
+    // Helper to read a file entry
+    const readFileEntry = (entry: FileSystemFileEntry): Promise<{ name: string; content: string; isBase64?: boolean }> => {
+      return new Promise((resolve, reject) => {
+        entry.file((file) => {
+          const ext = file.name.split('.').pop()?.toLowerCase() || '';
+          const isBinary = binaryExts.includes(ext);
+
+          if (isBinary) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              // Result is "data:mime/type;base64,XXXX" - extract just the base64 part
+              const dataUrl = reader.result as string;
+              const base64 = dataUrl.split(',')[1];
+              resolve({ name: file.name, content: base64, isBase64: true });
+            };
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          } else {
+            file.text()
+              .then(text => resolve({ name: file.name, content: text }))
+              .catch(reject);
+          }
+        }, reject);
+      });
+    };
+
+    // Helper to recursively read directory
+    const readDirectory = async (entry: FileSystemDirectoryEntry): Promise<ProjectFile[]> => {
+      const results: ProjectFile[] = [];
+      const reader = entry.createReader();
+
+      const entries = await new Promise<FileSystemEntry[]>((resolve) => {
+        reader.readEntries(resolve);
+      });
+
+      for (const child of entries) {
+        if (child.isFile) {
+          const fileData = await readFileEntry(child as FileSystemFileEntry);
+          results.push({
+            id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            name: fileData.name,
+            content: fileData.content,
+            language: fileData.name.split('.').pop() || 'text',
+            isFolder: false,
+            isBase64: fileData.isBase64,
+          });
+        } else if (child.isDirectory) {
+          const children = await readDirectory(child as FileSystemDirectoryEntry);
+          results.push({
+            id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            name: child.name,
+            content: '',
+            language: '',
+            isFolder: true,
+            children,
+          });
+        }
+      }
+
+      return results;
+    };
+
+    // Use dataTransfer.items for folder support
+    const items = dataTransfer.items;
+    const filesToAdd: { name: string; content: string; isBase64?: boolean }[] = [];
+    const foldersToAdd: ProjectFile[] = [];
+
+    for (const item of Array.from(items)) {
+      const entry = item.webkitGetAsEntry?.();
+      if (!entry) continue;
+
+      if (entry.isFile) {
+        const fileData = await readFileEntry(entry as FileSystemFileEntry);
+        filesToAdd.push(fileData);
+      } else if (entry.isDirectory) {
+        const folderFiles = await readDirectory(entry as FileSystemDirectoryEntry);
+        foldersToAdd.push({
+          id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name: entry.name,
+          content: '',
+          language: '',
+          isFolder: true,
+          children: folderFiles,
+        });
+      }
+    }
+
+    // Add files and folders to the specified parent
+    if (filesToAdd.length > 0) {
+      addFiles(filesToAdd, parentId);
+    }
+    if (foldersToAdd.length > 0) {
+      addFolders(foldersToAdd, parentId);
+    }
+  }, [addFiles, addFolders]);
+
   if (!currentProject) {
     return (
       <div className="h-full bg-filetree-bg p-4 text-muted-foreground text-sm">
@@ -274,8 +402,32 @@ const FileTree: React.FC<FileTreeProps> = ({ onFileSelect }) => {
     <FileTreeContext.Provider value={{
       onFileSelect,
       onDeleteNode: (id: string) => deleteFiles([id]),
+      onExternalDrop: handleExternalDrop,
+      externalDragOver,
+      setExternalDragOver,
     }}>
-      <div ref={ref} className="h-full bg-filetree-bg flex flex-col overflow-hidden">
+      <div
+        ref={ref}
+        className="h-full bg-filetree-bg flex flex-col overflow-hidden"
+        onDragOver={(e) => {
+          // Allow external file drops at root level
+          if (e.dataTransfer.types.includes('Files') && !externalDragOver) {
+            e.preventDefault();
+            e.currentTarget.classList.add('ring-2', 'ring-primary');
+          }
+        }}
+        onDragLeave={(e) => {
+          e.currentTarget.classList.remove('ring-2', 'ring-primary');
+        }}
+        onDrop={(e) => {
+          // Only handle if not dropping on a folder
+          if (e.dataTransfer.types.includes('Files') && !externalDragOver) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('ring-2', 'ring-primary');
+            handleExternalDrop(null, e.dataTransfer);
+          }
+        }}
+      >
         {/* Project header with action buttons */}
         <div className="p-2 border-b border-panel-border shrink-0 flex items-center justify-between">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
