@@ -141,6 +141,7 @@ class Worker {
             ];
 
             console.log(`[Worker ${this.id}] Building ${job.id}: ${compiler} ${compilerArgs.join(' ')}`);
+            console.log(`[Worker ${this.id}] Flags array:`, JSON.stringify(flags));
 
             // Run compilation
             const compileStart = Date.now();
