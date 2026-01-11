@@ -6,7 +6,7 @@ FROM emscripten/emsdk:latest
 # Pre-warm Emscripten port cache for common SDL libraries
 # This ensures SDL_image, SDL_mixer, SDL_ttf etc. are ready to use immediately
 RUN embuilder build sdl2 sdl2_image sdl2_mixer sdl2_ttf sdl2_net sdl2_gfx \
-    && embuilder build sdl3 || echo "SDL3 not yet available as port, skipping"
+    && embuilder build sdl3
 
 # Install Node.js
 RUN apt-get update && apt-get install -y \

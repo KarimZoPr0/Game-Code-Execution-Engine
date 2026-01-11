@@ -669,6 +669,14 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       const cppFiles = allFiles.filter((f) => f.name.endsWith(".cpp") || f.name.endsWith(".cc"));
       const headerFiles = allFiles.filter((f) => f.name.endsWith(".h") || f.name.endsWith(".hpp"));
 
+      // Asset files (images, audio, json, etc.) - binary files are already base64 encoded
+      const assetExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg',
+        '.wav', '.mp3', '.ogg', '.flac', '.aac',
+        '.json', '.xml', '.txt', '.csv', '.glsl', '.vert', '.frag'];
+      const assetFiles = allFiles.filter((f) =>
+        assetExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
+      );
+
       if (cFiles.length === 0 && cppFiles.length === 0) {
         throw new Error("No C or C++ source files found");
       }
@@ -757,10 +765,26 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         }
       }
 
-      const filesToSend = [...sourceFiles, ...headerFiles].map((f) => ({
+      // Build files to send: source files, headers, and assets
+      const sourceAndHeaders = [...sourceFiles, ...headerFiles].map((f) => ({
         path: f.path.replace(/\\/g, '/'),
         content: f.content,
       }));
+
+      // Binary asset extensions that need base64 encoding
+      const binaryExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp',
+        '.wav', '.mp3', '.ogg', '.flac', '.aac'];
+
+      const assets = assetFiles.map((f) => {
+        const isBinary = binaryExtensions.some(ext => f.name.toLowerCase().endsWith(ext));
+        return {
+          path: f.path.replace(/\\/g, '/'),
+          content: f.content,
+          isBase64: isBinary || f.isBase64,
+        };
+      });
+
+      const filesToSend = [...sourceAndHeaders, ...assets];
 
       const buildProfile = profileToUse ? {
         name: actualMode === 'game' ? 'debug_game' : 'debug_main',
