@@ -12,7 +12,8 @@
         "-sASSERTIONS=1",
         "-O0",
         "-sWASM_BIGINT",
-        "-sEXPORTED_RUNTIME_METHODS=[cwrap,addFunction,wasmMemory,wasmTable]"
+        "-sEXPORTED_RUNTIME_METHODS=[cwrap,addFunction,wasmMemory,wasmTable]",
+        "-sWEBSOCKET_URL=wss://gcee-backend.app.cloud.cbh.kth.se/"
     ],
     "debug_game": [
         "game/game.c",
@@ -35,7 +36,8 @@
         "-sALLOW_MEMORY_GROWTH=1",
         "-O2",
         "-sWASM_BIGINT",
-        "-sEXPORTED_RUNTIME_METHODS=[cwrap,addFunction,wasmMemory,wasmTable]"
+        "-sEXPORTED_RUNTIME_METHODS=[cwrap,addFunction,wasmMemory,wasmTable]",
+        "-sWEBSOCKET_URL=wss://gcee-backend.app.cloud.cbh.kth.se/"
     ],
     "release_game": [
         "game/game.c",

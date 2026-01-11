@@ -12,6 +12,7 @@ const worker = require('./worker');
 
 
 const app = express();
+app.set('trust proxy', 1); // Enable trust proxy for KTH Cloud load balancer
 const PORT = process.env.PORT || 3001;
 
 // Create HTTP server (needed for WebSocket upgrade)
