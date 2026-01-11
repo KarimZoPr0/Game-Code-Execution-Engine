@@ -229,7 +229,6 @@ class Worker {
         return new Promise((resolve) => {
             const proc = spawn(compiler, args, {
                 cwd,
-                shell: true,
                 env: { ...process.env }
             });
 
