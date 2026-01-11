@@ -547,6 +547,16 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   updateFileContent: (tabId, content) => {
     const { openTabs } = get();
+    const tab = openTabs.find((t) => t.id === tabId);
+
+    // If editing build_config.json, sync to buildConfig state
+    if (tab?.fileName === "build_config.json") {
+      try {
+        const config = JSON.parse(content);
+        set({ buildConfig: config });
+      } catch { /* ignore parse errors while typing */ }
+    }
+
     const updatedTabs = openTabs.map((t) =>
       t.id === tabId ? { ...t, content, isDirty: true } : t
     );
@@ -717,10 +727,13 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
             throw new Error(`Build profile '${profileName}' not found in build_config.json`);
           }
         }
-        // For non-live coding projects with a selected profile
-        else if (selectedProfile && buildConfig[selectedProfile]) {
-          profileName = selectedProfile;
-          profileToUse = buildConfig[profileName];
+        // For non-live coding projects, auto-select first available profile
+        else {
+          const availableProfiles = Object.keys(buildConfig);
+          if (availableProfiles.length > 0) {
+            profileName = availableProfiles[0]; // Use first profile (usually "debug")
+            profileToUse = buildConfig[profileName];
+          }
         }
 
         // Determine entry point from profile or auto-detect
