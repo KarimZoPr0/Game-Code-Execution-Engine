@@ -13,6 +13,10 @@ services:
       - "1234:1234"   # Game WebSocket
     volumes:
       - builds_data:/app/builds
+      # Mount source files for live development (changes apply without rebuild)
+      - ./reload.js:/app/reload.js:ro
+      - ./worker.js:/app/worker.js:ro
+      - ./server.js:/app/server.js:ro
     environment:
       - NODE_ENV=production
       - PORT=3001

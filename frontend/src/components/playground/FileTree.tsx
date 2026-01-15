@@ -173,25 +173,27 @@ const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => {
         <>
           <span className="truncate select-none flex-1">{node.data.name}</span>
           {/* Action buttons - visible on hover or when selected (for touch/mobile) */}
-          <div className={cn(
-            "items-center gap-0.5 shrink-0",
-            node.state.isSelected ? "flex" : "hidden group-hover:flex"
-          )}>
-            <button
-              onClick={handleRenameClick}
-              className="p-1 hover:bg-accent active:bg-accent rounded transition-colors"
-              title="Rename"
-            >
-              <Edit2 className="w-3 h-3 text-muted-foreground hover:text-foreground" />
-            </button>
-            <button
-              onClick={handleDeleteClick}
-              className="p-1 hover:bg-destructive/20 active:bg-destructive/20 rounded transition-colors"
-              title="Delete"
-            >
-              <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-            </button>
-          </div>
+          {node.data.name !== 'build_config.json' && (
+            <div className={cn(
+              "items-center gap-0.5 shrink-0",
+              node.state.isSelected ? "flex" : "hidden group-hover:flex"
+            )}>
+              <button
+                onClick={handleRenameClick}
+                className="p-1 hover:bg-accent active:bg-accent rounded transition-colors"
+                title="Rename"
+              >
+                <Edit2 className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+              </button>
+              <button
+                onClick={handleDeleteClick}
+                className="p-1 hover:bg-destructive/20 active:bg-destructive/20 rounded transition-colors"
+                title="Delete"
+              >
+                <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>

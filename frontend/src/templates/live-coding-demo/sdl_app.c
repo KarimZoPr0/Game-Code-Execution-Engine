@@ -25,7 +25,7 @@ int main(void)
     SDL_Window *win = SDL_CreateWindow("Live Coding Demo",
                     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                     WINDOW_WIDTH, WINDOW_HEIGHT, 0);
-    ctx = malloc(sizeof(GameContext));
+    ctx = calloc(1, sizeof(GameContext));
 
     ctx->renderer = SDL_CreateRenderer(
         win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);

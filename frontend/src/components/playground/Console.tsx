@@ -99,8 +99,8 @@ const Console: React.FC<ConsoleProps> = ({ isMobile = false }) => {
                 className={cn(
                   'rounded capitalize',
                   isMobile ? 'px-3 py-1.5' : 'px-2 py-0.5',
-                  filter === f 
-                    ? 'bg-primary/20 text-primary' 
+                  filter === f
+                    ? 'bg-primary/20 text-primary'
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                 )}
               >

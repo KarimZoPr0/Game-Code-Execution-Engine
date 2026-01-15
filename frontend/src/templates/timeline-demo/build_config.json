@@ -1,0 +1,19 @@
+{
+    "debug": [
+        "-sUSE_SDL=2",
+        "-sALLOW_MEMORY_GROWTH=1",
+        "-sWASM=1",
+        "-sASSERTIONS=1",
+        "-sEXPORTED_FUNCTIONS=['_main','_js_get_current_frame','_js_get_start_frame','_js_get_end_frame','_js_get_playback_frame','_js_is_recording','_js_is_replaying','_js_get_event_count','_js_start_recording','_js_stop_recording','_js_start_playback','_js_stop_playback','_js_seek_to_frame','_js_next_frame','_js_prev_frame','_js_set_loop','_js_pause','_js_play','_js_set_sim_speed','_js_get_sim_speed','_js_is_paused']",
+        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']",
+        "-O0"
+    ],
+    "release": [
+        "-sUSE_SDL=2",
+        "-sALLOW_MEMORY_GROWTH=1",
+        "-sWASM=1",
+        "-sEXPORTED_FUNCTIONS=['_main','_js_get_current_frame','_js_get_start_frame','_js_get_end_frame','_js_get_playback_frame','_js_is_recording','_js_is_replaying','_js_get_event_count','_js_start_recording','_js_stop_recording','_js_start_playback','_js_stop_playback','_js_seek_to_frame','_js_next_frame','_js_prev_frame','_js_set_loop','_js_pause','_js_play','_js_set_sim_speed','_js_get_sim_speed','_js_is_paused']",
+        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']",
+        "-O2"
+    ]
+}

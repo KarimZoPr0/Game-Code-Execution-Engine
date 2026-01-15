@@ -6,6 +6,7 @@ import MonacoEditor from './MonacoEditor';
 import Console from './Console';
 import GamePreview from './GamePreview';
 import ExcalidrawPanel from './ExcalidrawPanel';
+import TimelineEditor from './TimelineEditor';
 import Toolbar from './Toolbar';
 import MobilePlayground from './MobilePlayground';
 import { usePlaygroundStore } from '@/store/playgroundStore';
@@ -86,6 +87,12 @@ const defaultLayout: any = {
               },
               {
                 type: 'tab',
+                name: 'Timeline',
+                component: 'timeline',
+                enableClose: false,
+              },
+              {
+                type: 'tab',
                 name: 'Drawing',
                 component: 'excalidraw',
                 enableClose: false,
@@ -156,6 +163,8 @@ const PlaygroundLayout: React.FC = () => {
         return <GamePreview />;
       case 'excalidraw':
         return <ExcalidrawPanel />;
+      case 'timeline':
+        return <TimelineEditor />;
       default:
         return <div className="p-4 text-muted-foreground">Unknown panel: {component}</div>;
     }

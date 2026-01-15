@@ -7,7 +7,7 @@ const os = require('os');
 const queue = require('./queue');
 
 // Use tmpfs (RAM disk) for all builds - fast and ephemeral
-const BUILDS_DIR = '/tmp/builds';
+const BUILDS_DIR = path.join(os.tmpdir(), 'builds');
 
 // Ensure build directory exists
 if (!fs.existsSync(BUILDS_DIR)) {
@@ -228,9 +228,14 @@ class Worker {
 
     runCompiler(compiler, args, cwd, jobId) {
         return new Promise((resolve) => {
+            // On Windows, emcc is a batch script (.bat/.cmd)
+            // Node.js spawn needs shell: true to resolve these
+            const isWindows = process.platform === 'win32';
+
             const proc = spawn(compiler, args, {
                 cwd,
-                env: { ...process.env }
+                env: { ...process.env },
+                shell: isWindows  // Required on Windows to find emcc.bat
             });
 
             let stderr = '';

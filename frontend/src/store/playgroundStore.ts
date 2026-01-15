@@ -713,46 +713,22 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       const { selectedProfile } = get();
 
       if (buildConfig) {
-        // If user selected a profile, use it
-        if (selectedProfile && buildConfig[selectedProfile]) {
-          profileName = selectedProfile;
-          profileToUse = buildConfig[profileName];
+        // Require explicit profile selection
+        if (!selectedProfile) {
+          throw new Error("No build profile selected. Please select a profile from the dropdown.");
         }
-        // Otherwise, for live coding projects, use auto-selected profiles
-        else if (isLiveCodingProject) {
-          profileName = actualMode === 'game' ? 'debug_game' : 'debug_main';
-          profileToUse = buildConfig[profileName];
 
-          if (!profileToUse) {
-            throw new Error(`Build profile '${profileName}' not found in build_config.json`);
-          }
+        if (!buildConfig[selectedProfile]) {
+          throw new Error(`Build profile '${selectedProfile}' not found in build_config.json`);
         }
-        // For non-live coding projects, auto-select first available profile
-        else {
-          const availableProfiles = Object.keys(buildConfig);
-          if (availableProfiles.length > 0) {
-            profileName = availableProfiles[0]; // Use first profile (usually "debug")
-            profileToUse = buildConfig[profileName];
-          }
-        }
+
+        profileName = selectedProfile;
+        profileToUse = buildConfig[profileName];
 
         // Determine entry point from profile or auto-detect
-        if (profileToUse) {
-          if (profileToUse[0] && !profileToUse[0].startsWith('-')) {
-            entry = profileToUse[0];
-          } else {
-            if (actualMode === 'game') {
-              const gameFile = sourceFiles.find(f => f.path.includes('game/game.c') || f.path.includes('game/game.cpp'));
-              entry = gameFile?.path || 'game/game.c';
-            } else {
-              const mainFile = sourceFiles.find(f =>
-                f.name === 'sdl_app.c' || f.name === 'sdl_app.cpp'
-              );
-              entry = mainFile?.path || sourceFiles[0]?.path || 'sdl_app.c';
-            }
-          }
+        if (profileToUse[0] && !profileToUse[0].startsWith('-')) {
+          entry = profileToUse[0];
         } else {
-          // No profile selected, auto-detect entry
           if (actualMode === 'game') {
             const gameFile = sourceFiles.find(f => f.path.includes('game/game.c') || f.path.includes('game/game.cpp'));
             entry = gameFile?.path || 'game/game.c';
@@ -765,17 +741,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           }
         }
       } else {
-        // No build config, auto-detect entry
-        if (actualMode === 'game') {
-          const gameFile = sourceFiles.find(f => f.path.includes('game/game.c') || f.path.includes('game/game.cpp'));
-          entry = gameFile?.path || 'game/game.c';
-        } else {
-          const mainFile = sourceFiles.find(f =>
-            f.name === 'sdl_app.c' || f.name === 'sdl_app.cpp' ||
-            f.name === 'main.c' || f.name === 'main.cpp'
-          );
-          entry = mainFile?.path || sourceFiles[0]?.path || 'main.c';
-        }
+        throw new Error("No build_config.json found. Please add a build configuration file to your project.");
       }
 
       // Build files to send: source files, headers, and assets
@@ -925,6 +891,21 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject, openTabs } = get();
     if (!currentProject) return;
 
+    // Check if we are trying to rename build_config.json
+    const isProtected = (files: ProjectFile[]): boolean => {
+      for (const f of files) {
+        if (f.id === fileId) {
+          return f.name === 'build_config.json';
+        }
+        if (f.children && isProtected(f.children)) return true;
+      }
+      return false;
+    };
+
+    if (isProtected(currentProject.files)) {
+      return; // Cannot rename build_config.json
+    }
+
     const updateFilesRecursive = (files: ProjectFile[]): ProjectFile[] => {
       return files.map((f) => {
         if (f.id === fileId) {
@@ -1001,7 +982,22 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject, openTabs, activeTabId } = get();
     if (!currentProject) return;
 
-    const fileIdSet = new Set(fileIds);
+    // Find protected file IDs (build_config.json cannot be deleted)
+    const findProtectedIds = (files: ProjectFile[]): Set<string> => {
+      const ids = new Set<string>();
+      for (const f of files) {
+        if (f.name === 'build_config.json') ids.add(f.id);
+        if (f.children) {
+          for (const id of findProtectedIds(f.children)) ids.add(id);
+        }
+      }
+      return ids;
+    };
+    const protectedIds = findProtectedIds(currentProject.files);
+
+    // Filter out protected files from deletion
+    const fileIdSet = new Set(fileIds.filter(id => !protectedIds.has(id)));
+    if (fileIdSet.size === 0) return; // Nothing to delete
 
     const removeFilesRecursive = (files: ProjectFile[]): ProjectFile[] => {
       return files
@@ -1034,7 +1030,24 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { currentProject } = get();
     if (!currentProject) return;
 
-    const dragIdSet = new Set(dragIds);
+    // Find protected file IDs (build_config.json cannot be moved)
+    const findProtectedIds = (files: ProjectFile[]): Set<string> => {
+      const ids = new Set<string>();
+      for (const f of files) {
+        if (f.name === 'build_config.json') ids.add(f.id);
+        if (f.children) {
+          for (const id of findProtectedIds(f.children)) ids.add(id);
+        }
+      }
+      return ids;
+    };
+    const protectedIds = findProtectedIds(currentProject.files);
+
+    // Filter out protected files from move
+    const filteredDragIds = dragIds.filter(id => !protectedIds.has(id));
+    if (filteredDragIds.length === 0) return; // Nothing to move
+
+    const dragIdSet = new Set(filteredDragIds);
 
     const draggedFiles: ProjectFile[] = [];
     const collectDraggedFiles = (files: ProjectFile[]) => {

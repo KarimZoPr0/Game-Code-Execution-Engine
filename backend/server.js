@@ -46,7 +46,7 @@ const CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const MAX_BUILD_AGE = 60 * 60 * 1000;    // 1 hour
 
 function cleanupOldBuilds() {
-  const buildsDir = '/tmp/builds';
+  const buildsDir = path.join(require('os').tmpdir(), 'builds');
   if (!fs.existsSync(buildsDir)) return;
 
   const now = Date.now();
@@ -213,7 +213,7 @@ app.get('/api/build/:id/result', (req, res) => {
 app.get('/preview/:id/*', (req, res) => {
   const { id } = req.params;
   const filePath = req.params[0] || 'index.html';
-  const buildsDir = path.join('/tmp/builds', id);
+  const buildsDir = path.join(require('os').tmpdir(), 'builds', id);
   const fullPath = path.join(buildsDir, filePath);
 
   // Security: ensure path is within builds directory
