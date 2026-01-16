@@ -25,6 +25,7 @@ docker-compose up
 - Code execution system
 - Live coding
 - Multiplayer
+- Timeline
 
 ## Tech Stack
 
