@@ -1,6 +1,6 @@
-# Game Code
+# wasmcode
 
-A comprehensive game development platform featuring a web-based code editor and execution engine powered by WebAssembly.
+A browser-based, sandboxed execution environment for native C/C++ applications, compiled to WebAssembly via Emscripten, with support for real-time graphical and console output.
 
 ## Getting Started
 
@@ -18,11 +18,11 @@ docker-compose up
 
 ## Features
 
-- Mobile-responsive interface
-- Code execution system
-- Live coding
-- Multiplayer
-- Timeline
+- In-browser execution of C/C++ programs compiled to WebAssembly
+- Real-time console output and graphical preview
+- File-based project structure (multiple source files and assets)
+- Live code editing and execution
+- Sandboxed runtime environment
 
 ## Tech Stack
 
